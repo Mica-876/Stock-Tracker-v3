@@ -68,7 +68,7 @@ def render_deep_dive_tab(ticker_list):
     location = f"{city}, {country}".strip(", ") if (city or country) else "Global"
     summary = info.get("longBusinessSummary") or "No business summary or prospectus available for this ticker."
 
-    # Native Card Container: avoids raw HTML escaping bugs
+    # Native Card Container
     with st.container(border=True):
         h_col1, h_col2 = st.columns([3, 1])
         with h_col1:
@@ -86,7 +86,7 @@ def render_deep_dive_tab(ticker_list):
 
         st.markdown(f"<p style='color:#94a3b8; font-size:13px; line-height:1.5; margin-top:10px;'><strong>Profile & Investment Strategy:</strong><br>{summary}</p>", unsafe_allow_html=True)
 
-    # Current Price extraction with fallback hierarchy
+    # Current Price extraction
     latest_hist = stk.history(period="5d")
     latest_close = float(latest_hist['Close'].iloc[-1]) if not latest_hist.empty else 0.0
     current_p = (
@@ -318,19 +318,17 @@ def render_deep_dive_tab(ticker_list):
     st.caption(f"_{overview_model['labels']['footerNote']}_")
     st.markdown("---")
 
-    # --- HISTORICAL PRICE ACTION & 50 / 150 / 200 SMA ---
-    # Query with a lookback window of 365 calendar days before selected_year so 200-day rolling SMA is fully primed
+    # --- HISTORICAL PRICE ACTION WITH LOOKBACK FOR CONTINUOUS SMA ---
     extended_start = f"{int(selected_year) - 1}-01-01"
     end_date = f"{selected_year}-12-31"
     hist_raw = stk.history(start=extended_start, end=end_date)
 
     if not hist_raw.empty:
-        # Calculate moving averages across the continuous dataset
+        # Calculate full rolling averages on continuous data
         hist_raw["50_SMA"] = hist_raw["Close"].rolling(window=50).mean()
         hist_raw["150_SMA"] = hist_raw["Close"].rolling(window=150).mean()
         hist_raw["200_SMA"] = hist_raw["Close"].rolling(window=200).mean()
 
-        # Slice to only display data for selected_year
         target_year_start = f"{selected_year}-01-01"
         hist = hist_raw.loc[hist_raw.index >= target_year_start].copy()
 
@@ -349,40 +347,53 @@ def render_deep_dive_tab(ticker_list):
 
             st.markdown("<br>", unsafe_allow_html=True)
 
-            fig = go.Figure()
+            # Interactive Indicator Toggles
             if chart_style == "Line Chart with Moving Averages":
-                # Primary Close Price
-                fig.add_trace(go.Scatter(
-                    x=hist.index,
-                    y=hist['Close'],
-                    mode='lines',
-                    name='Close Price',
-                    line=dict(color='#10b981', width=2.5)
-                ))
-                # 50-Day SMA (Amber)
-                fig.add_trace(go.Scatter(
-                    x=hist.index,
-                    y=hist['50_SMA'],
-                    mode='lines',
-                    name='50-Day SMA',
-                    line=dict(color='#f59e0b', width=1.75)
-                ))
-                # 150-Day SMA (Cyan Blue)
-                fig.add_trace(go.Scatter(
-                    x=hist.index,
-                    y=hist['150_SMA'],
-                    mode='lines',
-                    name='150-Day SMA',
-                    line=dict(color='#38bdf8', width=1.75)
-                ))
-                # 200-Day SMA (Coral Red)
-                fig.add_trace(go.Scatter(
-                    x=hist.index,
-                    y=hist['200_SMA'],
-                    mode='lines',
-                    name='200-Day SMA',
-                    line=dict(color='#ef4444', width=2.0)
-                ))
+                tog1, tog2, tog3, tog4 = st.columns(4)
+                with tog1:
+                    show_close = st.checkbox("Close Price", value=True, key="chk_close_price")
+                with tog2:
+                    show_sma50 = st.checkbox("50-Day SMA", value=True, key="chk_sma_50")
+                with tog3:
+                    show_sma150 = st.checkbox("150-Day SMA", value=True, key="chk_sma_150")
+                with tog4:
+                    show_sma200 = st.checkbox("200-Day SMA", value=True, key="chk_sma_200")
+
+            fig = go.Figure()
+
+            if chart_style == "Line Chart with Moving Averages":
+                if show_close:
+                    fig.add_trace(go.Scatter(
+                        x=hist.index,
+                        y=hist['Close'],
+                        mode='lines',
+                        name='Close Price',
+                        line=dict(color='#10b981', width=2.5)
+                    ))
+                if show_sma50:
+                    fig.add_trace(go.Scatter(
+                        x=hist.index,
+                        y=hist['50_SMA'],
+                        mode='lines',
+                        name='50-Day SMA',
+                        line=dict(color='#f59e0b', width=1.75)
+                    ))
+                if show_sma150:
+                    fig.add_trace(go.Scatter(
+                        x=hist.index,
+                        y=hist['150_SMA'],
+                        mode='lines',
+                        name='150-Day SMA',
+                        line=dict(color='#38bdf8', width=1.75)
+                    ))
+                if show_sma200:
+                    fig.add_trace(go.Scatter(
+                        x=hist.index,
+                        y=hist['200_SMA'],
+                        mode='lines',
+                        name='200-Day SMA',
+                        line=dict(color='#ef4444', width=2.0)
+                    ))
             else:
                 fig.add_trace(go.Candlestick(
                     x=hist.index,
@@ -393,8 +404,12 @@ def render_deep_dive_tab(ticker_list):
                     name=selected_stock
                 ))
 
+            # Layout: Legend pinned to top-left, unobstructed by any toolbar
             fig.update_layout(
-                title=f"{selected_stock} - Performance ({selected_year})",
+                title=dict(
+                    text=f"{selected_stock} - Performance ({selected_year})",
+                    font=dict(size=16, color="#f1f5f9")
+                ),
                 hovermode="x unified",
                 yaxis_title="Price ($)",
                 template="plotly_dark",
@@ -404,12 +419,21 @@ def render_deep_dive_tab(ticker_list):
                     orientation="h",
                     yanchor="bottom",
                     y=1.02,
-                    xanchor="right",
-                    x=1
+                    xanchor="left",
+                    x=0.01,
+                    font=dict(size=11, color="#cbd5e1")
                 ),
-                margin=dict(l=20, r=20, t=40, b=20)
+                margin=dict(l=20, r=20, t=55, b=20)
             )
-            st.plotly_chart(fig, width="stretch")
+
+            # Permanently hides the hovering modebar icons
+            chart_config = {
+                "displayModeBar": False,
+                "scrollZoom": False,
+                "responsive": True
+            }
+
+            st.plotly_chart(fig, width="stretch", config=chart_config)
 
             # Monthly Breakdown
             st.markdown(f"#### 📅 {selected_stock} Monthly Breakdown ({selected_year})")
@@ -424,7 +448,7 @@ def render_deep_dive_tab(ticker_list):
                 })
                 st.dataframe(monthly_df, width="stretch", hide_index=True)
 
-        # News Feed (Modern Nested Payload Parser)
+        # News Feed
         st.markdown("---")
         st.markdown(f"#### 📰 Recent Headlines for {selected_stock}")
         try:

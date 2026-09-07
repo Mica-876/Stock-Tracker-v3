@@ -1,108 +1,238 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import yfinance as yf
-import datetime
-from storage import sync_to_file
+from storage import save_portfolio_data
 from data_engine import get_dividend_metrics
 
-def render_portfolio_tab():
-    st.markdown("### 💼 Portfolio Management Console")
+def render_portfolio_tab(portfolio_data, ticker_list):
+    st.markdown("### 💼 Portfolio Management & Allocation")
+    st.caption("Manage custom portfolios, track positions, monitor allocations, and maintain profiles.")
 
-    col_user1, col_user2 = st.columns([2, 2])
+    # Ensure profile structure exists
+    if "profiles" not in portfolio_data or not portfolio_data["profiles"]:
+        portfolio_data["profiles"] = {
+            "Default Portfolio": {
+                "cash": 10000.0,
+                "positions": {}
+            }
+        }
 
-    with col_user1:
-        existing_users = list(st.session_state.portfolios.keys())
-        active_user = st.selectbox("Select Member Profile:", existing_users)
+    profile_names = list(portfolio_data["profiles"].keys())
 
-    with col_user2:
-        new_username = st.text_input("Create New Profile:")
-        if st.button("➕ Create Profile") and new_username:
-            clean_name = new_username.strip()
-            if clean_name and clean_name not in st.session_state.portfolios:
-                st.session_state.portfolios[clean_name] = []
-                sync_to_file()
-                st.session_state.last_updated = datetime.datetime.now().strftime("%H:%M:%S")
-                st.success(f"Profile created for {clean_name}")
-                st.rerun()
+    # Ensure active profile selection state
+    if "active_profile" not in st.session_state or st.session_state["active_profile"] not in profile_names:
+        st.session_state["active_profile"] = profile_names[0]
+
+    # --- PROFILE MANAGEMENT & CONTROLS ---
+    with st.expander("⚙️ Manage Portfolio Profiles", expanded=False):
+        c_prof1, c_prof2, c_prof3 = st.columns([2, 2, 2])
+
+        with c_prof1:
+            active_profile = st.selectbox(
+                "Active Portfolio Profile:",
+                options=profile_names,
+                index=profile_names.index(st.session_state["active_profile"])
+            )
+            st.session_state["active_profile"] = active_profile
+
+        with c_prof2:
+            new_profile_name = st.text_input("New Profile Name:", placeholder="e.g. Growth ISA / Tech Fund").strip()
+            if st.button("➕ Create Profile"):
+                if new_profile_name and new_profile_name not in portfolio_data["profiles"]:
+                    portfolio_data["profiles"][new_profile_name] = {
+                        "cash": 10000.0,
+                        "positions": {}
+                    }
+                    save_portfolio_data(portfolio_data)
+                    st.session_state["active_profile"] = new_profile_name
+                    st.success(f"Profile '{new_profile_name}' created.")
+                    st.rerun()
+                elif new_profile_name in portfolio_data["profiles"]:
+                    st.warning("A profile with that name already exists.")
+
+        with c_prof3:
+            st.markdown("**Delete Active Profile**")
+            can_delete = len(profile_names) > 1
+            if can_delete:
+                confirm_delete = st.checkbox(f"Confirm deleting '{active_profile}'", key="delete_confirm_chk")
+                if st.button("🗑️ Delete Profile", disabled=not confirm_delete):
+                    del portfolio_data["profiles"][active_profile]
+                    save_portfolio_data(portfolio_data)
+                    remaining_profiles = list(portfolio_data["profiles"].keys())
+                    st.session_state["active_profile"] = remaining_profiles[0]
+                    st.success(f"Profile '{active_profile}' successfully removed.")
+                    st.rerun()
+            else:
+                st.caption("⚠️ Cannot delete the only remaining profile. Create another profile first to remove this one.")
+
+    active_profile = st.session_state["active_profile"]
+    current_portfolio = portfolio_data["profiles"][active_profile]
+    positions = current_portfolio.get("positions", {})
+    cash = float(current_portfolio.get("cash", 0.0))
 
     st.markdown("---")
 
-    with st.expander(f"➕ Add Position to {active_user}'s Portfolio", expanded=False):
-        with st.form("add_position_form", clear_on_submit=True):
-            col_p1, col_p2, col_p3 = st.columns(3)
-            p_ticker = col_p1.text_input("Stock Ticker:").strip().upper()
-            p_shares = col_p2.number_input("Shares:", min_value=0.001, step=1.0)
-            p_buy_price = col_p3.number_input("Avg Buy Price ($):", min_value=0.01, step=1.0)
+    # --- ADD OR UPDATE POSITION FORM ---
+    col_pos1, col_pos2, col_pos3, col_pos4 = st.columns([2, 1.5, 1.5, 1.5])
 
-            if st.form_submit_button("Save Position") and p_ticker:
-                st.session_state.portfolios[active_user].append({
-                    "ticker": p_ticker,
-                    "shares": float(p_shares),
-                    "buy_price": float(p_buy_price)
-                })
-                sync_to_file()
-                st.session_state.last_updated = datetime.datetime.now().strftime("%H:%M:%S")
-                st.success(f"Added position for {p_ticker}!")
+    with col_pos1:
+        target_ticker = st.text_input("Asset Ticker (Stock or ETF):", value="NVDA").upper().strip()
+
+    with col_pos2:
+        shares_held = st.number_input("Shares Quantity:", min_value=0.0, value=10.0, step=1.0)
+
+    with col_pos3:
+        avg_cost = st.number_input("Average Cost Basis ($):", min_value=0.0, value=110.0, step=5.0)
+
+    with col_pos4:
+        st.write("")
+        st.write("")
+        if st.button("💾 Save Position"):
+            if target_ticker and shares_held > 0:
+                current_portfolio["positions"][target_ticker] = {
+                    "shares": shares_held,
+                    "avg_cost": avg_cost
+                }
+                save_portfolio_data(portfolio_data)
+                st.success(f"Saved {shares_held} shares of {target_ticker} to '{active_profile}'.")
                 st.rerun()
+            elif target_ticker and shares_held == 0:
+                if target_ticker in current_portfolio["positions"]:
+                    del current_portfolio["positions"][target_ticker]
+                    save_portfolio_data(portfolio_data)
+                    st.info(f"Removed {target_ticker} from positions.")
+                    st.rerun()
 
-    user_holdings = st.session_state.portfolios.get(active_user, [])
+    # --- CASH BALANCE MANAGEMENT ---
+    c_cash1, c_cash2 = st.columns([2, 4])
+    with c_cash1:
+        new_cash = st.number_input(f"Unallocated Cash for '{active_profile}' ($):", min_value=0.0, value=cash, step=500.0)
+        if new_cash != cash:
+            current_portfolio["cash"] = float(new_cash)
+            save_portfolio_data(portfolio_data)
+            st.rerun()
 
-    if user_holdings:
-        portfolio_rows = []
-        total_invested = 0
-        total_current_val = 0
-        total_annual_div = 0
+    # --- PORTFOLIO TABLE & VALUATION ENGINE ---
+    portfolio_rows = []
+    total_market_val = 0.0
+    total_cost_basis = 0.0
+    total_annual_dividends = 0.0
 
-        for item in user_holdings:
-            t_sym = item["ticker"]
-            shares = item["shares"]
-            buy_p = item["buy_price"]
+    if positions:
+        for ticker, pos in positions.items():
+            sh = float(pos.get("shares", 0))
+            cost = float(pos.get("avg_cost", 0))
+            cost_val = sh * cost
 
-            stk = yf.Ticker(t_sym)
-            live_p = stk.info.get("currentPrice") or stk.info.get("regularMarketPrice") or buy_p
+            # Fetch live pricing with fallback
+            stk = yf.Ticker(ticker)
+            fast = getattr(stk, "fast_info", None)
+            cur_p = getattr(fast, "last_price", None)
+            
+            if cur_p is None:
+                try:
+                    hist = stk.history(period="5d")
+                    cur_p = float(hist['Close'].iloc[-1]) if not hist.empty else cost
+                except Exception:
+                    cur_p = cost
 
-            div_rate, div_yield = get_dividend_metrics(stk.info, live_p)
-            annual_position_div = shares * div_rate
-            total_annual_div += annual_position_div
+            market_val = sh * cur_p
+            unrealized_gain = market_val - cost_val
+            gain_pct = (unrealized_gain / cost_val) * 100 if cost_val > 0 else 0.0
 
-            cost_basis = shares * buy_p
-            current_val = shares * live_p
-            pnl = current_val - cost_basis
-            pnl_pct = (pnl / cost_basis) * 100 if cost_basis else 0
+            # Dividends
+            try:
+                info = stk.info or {}
+            except Exception:
+                info = {}
+            div_rate, div_yield = get_dividend_metrics(info, cur_p)
+            annual_div_income = sh * div_rate
 
-            total_invested += cost_basis
-            total_current_val += current_val
+            total_market_val += market_val
+            total_cost_basis += cost_val
+            total_annual_dividends += annual_div_income
 
             portfolio_rows.append({
-                "Ticker": t_sym,
-                "Shares Owned": shares,
-                "Avg Buy Price ($)": f"${buy_p:.2f}",
-                "Live Price ($)": f"${live_p:.2f}",
-                "Total Cost ($)": f"${cost_basis:.2f}",
-                "Current Value ($)": f"${current_val:.2f}",
-                "Gain / Loss ($)": f"${pnl:.2f}",
-                "Gain / Loss (%)": f"{pnl_pct:.2f}%",
-                "Div Yield (%)": f"{div_yield:.2f}%",
-                "Est. Annual Div ($)": f"${annual_position_div:.2f}"
+                "Ticker": ticker,
+                "Shares": sh,
+                "Avg Cost": f"${cost:,.2f}",
+                "Current Price": f"${cur_p:,.2f}",
+                "Cost Basis": cost_val,
+                "Market Value": market_val,
+                "P&L ($)": unrealized_gain,
+                "Return (%)": gain_pct,
+                "Div Yield (%)": div_yield,
+                "Annual Divs ($)": annual_div_income
             })
 
-        total_pnl = total_current_val - total_invested
-        total_pnl_pct = (total_pnl / total_invested) * 100 if total_invested else 0
-        port_div_yield = (total_annual_div / total_current_val * 100) if total_current_val else 0
+    total_portfolio_worth = total_market_val + current_portfolio.get("cash", 0.0)
+    total_pnl = total_market_val - total_cost_basis
+    overall_return = (total_pnl / total_cost_basis) * 100 if total_cost_basis > 0 else 0.0
+    portfolio_yield = (total_annual_dividends / total_market_val) * 100 if total_market_val > 0 else 0.0
 
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Total Invested", f"${total_invested:,.2f}")
-        p2.metric("Market Value", f"${total_current_val:,.2f}")
-        p3.metric("Total Return", f"${total_pnl:,.2f}", f"{total_pnl_pct:.2f}%")
-        p4.metric("Est. Annual Income", f"${total_annual_div:,.2f}", f"Yield: {port_div_yield:.2f}%")
+    st.markdown("---")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(portfolio_rows), width="stretch", hide_index=True)
+    # --- TOP LEVEL METRICS BAR ---
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Portfolio Value", f"${total_portfolio_worth:,.2f}", help="Includes equity market value and unallocated cash.")
+    m2.metric("Unrealized P&L", f"${total_pnl:+,.2f}", f"{overall_return:+.2f}%")
+    m3.metric("Annual Dividend Income", f"${total_annual_dividends:,.2f}", f"{portfolio_yield:.2f}% Yield")
+    m4.metric("Cash Reserve", f"${current_portfolio.get('cash', 0.0):,.2f}")
 
-        if st.button("🗑️ Clear Portfolio Holdings"):
-            st.session_state.portfolios[active_user] = []
-            sync_to_file()
-            st.session_state.last_updated = datetime.datetime.now().strftime("%H:%M:%S")
-            st.rerun()
+    # --- VISUAL ALLOCATION & BREAKDOWN ---
+    if portfolio_rows:
+        df_display = pd.DataFrame(portfolio_rows)
+
+        col_table, col_pie = st.columns([3, 2])
+
+        with col_table:
+            st.markdown(f"#### 📋 Positions in {active_profile}")
+            formatted_df = pd.DataFrame({
+                "Ticker": df_display["Ticker"],
+                "Shares": df_display["Shares"].map("{:,.2f}".format),
+                "Avg Cost": df_display["Avg Cost"],
+                "Price": df_display["Current Price"],
+                "Market Value": df_display["Market Value"].map("${:,.2f}".format),
+                "Unrealized P&L": df_display["P&L ($)"].map("${:+,.2f}".format),
+                "Gain/Loss": df_display["Return (%)"].map("{:+.2f}%".format),
+                "Annual Div": df_display["Annual Divs ($)"].map("${:,.2f}".format)
+            })
+            st.dataframe(formatted_df, width="stretch", hide_index=True)
+
+        with col_pie:
+            st.markdown("#### 🥧 Asset Allocation")
+            pie_data = [{"Asset": r["Ticker"], "Value": r["Market Value"]} for r in portfolio_rows]
+            if current_portfolio.get("cash", 0.0) > 0:
+                pie_data.append({"Asset": "Cash", "Value": current_portfolio.get("cash", 0.0)})
+
+            pie_df = pd.DataFrame(pie_data)
+            fig_pie = px.pie(
+                pie_df,
+                names="Asset",
+                values="Value",
+                hole=0.45,
+                template="plotly_dark",
+                color_discrete_sequence=px.colors.qualitative.Prism
+            )
+            fig_pie.update_layout(
+                paper_bgcolor='#090d16',
+                plot_bgcolor='#0f172a',
+                margin=dict(l=20, r=20, t=20, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+            )
+            st.plotly_chart(fig_pie, width="stretch")
+
+        # Quick Delete Action Per Position
+        st.markdown("##### Manage Individual Positions")
+        del_cols = st.columns(len(positions) if len(positions) <= 6 else 6)
+        for i, tick in enumerate(list(positions.keys())):
+            col_idx = i % 6
+            with del_cols[col_idx]:
+                if st.button(f"Remove {tick}", key=f"del_pos_{tick}"):
+                    del current_portfolio["positions"][tick]
+                    save_portfolio_data(portfolio_data)
+                    st.rerun()
     else:
-        st.info(f"No active holdings recorded for {active_user}.")
+        st.info(f"No positions added to '{active_profile}' yet. Enter an asset ticker and quantity above to begin tracking.")

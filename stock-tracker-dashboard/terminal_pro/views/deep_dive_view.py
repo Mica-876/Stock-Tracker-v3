@@ -45,32 +45,89 @@ def render_deep_dive_tab(ticker_list):
         </div>
         """, unsafe_allow_html=True)
 
-        # Fundamentals Metrics
+        # --- DYNAMIC HISTORICAL FINANCIAL EXTRACTION ---
+        try:
+            financials_df = stk.financials
+            balance_sheet_df = stk.balance_sheet
+            cashflow_df = stk.cashflow
+        except Exception:
+            financials_df, balance_sheet_df, cashflow_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        # Find matching column for the selected year
+        def get_col_for_year(df, yr):
+            if df is not None and not df.empty:
+                for col in df.columns:
+                    try:
+                        if hasattr(col, "year") and col.year == yr:
+                            return col
+                        elif str(yr) in str(col):
+                            return col
+                    except Exception:
+                        continue
+            return None
+
+        col_fin = get_col_for_year(financials_df, selected_year)
+        col_bs = get_col_for_year(balance_sheet_df, selected_year)
+        col_cf = get_col_for_year(cashflow_df, selected_year)
+
+        is_historical_year = col_fin is not None
+
+        if is_historical_year:
+            st.caption(f"Showing filed audited statements for FY **{selected_year}**")
+            
+            # Helper safely extract line item
+            def get_item(df, target_col, keys):
+                if df is not None and not df.empty and target_col in df.columns:
+                    for k in keys:
+                        if k in df.index and pd.notnull(df.loc[k, target_col]):
+                            return float(df.loc[k, target_col])
+                return None
+
+            rev = get_item(financials_df, col_fin, ["Total Revenue", "Operating Revenue", "Revenue"])
+            net_income = get_item(financials_df, col_fin, ["Net Income", "Net Income Common Stockholders"])
+            eps = get_item(financials_df, col_fin, ["Diluted EPS", "Basic EPS"])
+            profit_margin = (net_income / rev) if (rev and net_income) else None
+
+            total_cash = get_item(balance_sheet_df, col_bs, ["Cash Cash Equivalents And Short Term Investments", "Cash And Cash Equivalents", "Other Short Term Investments"])
+            stockholder_equity = get_item(balance_sheet_df, col_bs, ["Stockholders Equity", "Total Equity Gross Minority Interest", "Common Stock Equity"])
+            total_debt = get_item(balance_sheet_df, col_bs, ["Total Debt", "Long Term Debt", "Current Debt"])
+            
+            debt_to_equity = (total_debt / stockholder_equity) if (total_debt and stockholder_equity and stockholder_equity > 0) else None
+            roe = (net_income / stockholder_equity) if (net_income and stockholder_equity and stockholder_equity > 0) else None
+            
+            operating_cash = get_item(cashflow_df, col_cf, ["Operating Cash Flow", "Cash Flows from Operating Activities"])
+            forward_pe = None  # Forward P/E is strictly forward-looking
+        else:
+            st.caption(f"Filed full-year statement unavailable for **{selected_year}**. Displaying latest TTM metrics.")
+            rev = info.get("totalRevenue", None)
+            profit_margin = info.get("profitMargins", None)
+            eps = info.get("trailingEps", None)
+            forward_pe = info.get("forwardPE", None)
+            total_cash = info.get("totalCash", None)
+            debt_to_equity = info.get("debtToEquity", None)
+            if debt_to_equity:
+                debt_to_equity = debt_to_equity / 100.0 if debt_to_equity > 10 else debt_to_equity
+            roe = info.get("returnOnEquity", None)
+            operating_cash = info.get("operatingCashflow", None)
+
+        # Fundamentals Metric Display
         f1, f2, f3, f4 = st.columns(4)
 
-        rev = info.get("totalRevenue", None)
-        f1.metric("Revenue ($B)", f"${rev / 1e9:.2f}B" if rev else "N/A")
-        profit_margin = info.get("profitMargins", None)
-        f1.metric("Profit Margin", f"{profit_margin * 100:.2f}%" if profit_margin else "N/A")
+        f1.metric(f"Revenue ({selected_year})", f"${rev / 1e9:.2f}B" if rev else "N/A")
+        f1.metric("Profit Margin", f"{profit_margin * 100:.2f}%" if profit_margin is not None else "N/A")
 
-        eps = info.get("trailingEps", None)
-        f2.metric("EPS (TTM)", f"${eps:.2f}" if eps else "N/A")
-        forward_pe = info.get("forwardPE", None)
-        f2.metric("Forward P/E", f"{forward_pe:.2f}" if forward_pe else "N/A")
+        f2.metric("Diluted EPS", f"${eps:.2f}" if eps is not None else "N/A")
+        f2.metric("P/E Benchmark", f"{forward_pe:.2f} (Fwd)" if forward_pe else "N/A")
 
-        total_cash = info.get("totalCash", None)
-        f3.metric("Total Cash ($B)", f"${total_cash / 1e9:.2f}B" if total_cash else "N/A")
-        debt_to_equity = info.get("debtToEquity", None)
-        f3.metric("Debt-to-Equity", f"{debt_to_equity:.2f}" if debt_to_equity else "N/A")
+        f3.metric("Total Cash", f"${total_cash / 1e9:.2f}B" if total_cash else "N/A")
+        f3.metric("Debt-to-Equity", f"{debt_to_equity:.2f}" if debt_to_equity is not None else "N/A")
 
-        roe = info.get("returnOnEquity", None)
-        f4.metric("ROE (%)", f"{roe * 100:.2f}%" if roe else "N/A")
-        operating_cash = info.get("operatingCashflow", None)
-        f4.metric("Op Cash ($B)", f"${operating_cash / 1e9:.2f}B" if operating_cash else "N/A")
+        f4.metric("Return on Equity (ROE)", f"{roe * 100:.2f}%" if roe is not None else "N/A")
+        f4.metric("Operating Cash Flow", f"${operating_cash / 1e9:.2f}B" if operating_cash else "N/A")
 
         st.markdown("---")
 
-        # Dividend Section
+        # --- DIVIDEND CALCULATOR SECTION ---
         st.markdown(f"### 💰 Dividend Calculator for {selected_stock}")
 
         current_p = info.get("currentPrice") or info.get("regularMarketPrice", 0)
@@ -104,25 +161,25 @@ def render_deep_dive_tab(ticker_list):
 
         st.markdown("---")
 
-        # Dynamic Projection Engine
+        # --- DYNAMIC PROJECTION ENGINE ---
         overview_model = {
             "labels": {
                 "currencySymbol": "$",
-                "title": "2026 Financial Overview",
-                "subtitle": "Current Year Projection & Dividend Analysis",
+                "title": f"{selected_year} Financial Overview",
+                "subtitle": f"Calendar Year {selected_year} Projection & Dividend Analysis",
                 "xAxis": "Quarter",
                 "yAxis": "Amount",
-                "slidersTitle": "Adjust 2026 Parameters",
-                "footerNote": "*Adjusted baseline to 2026 calendar year and updated dividend metrics to match current portfolio yield."
+                "slidersTitle": f"Adjust {selected_year} Parameters",
+                "footerNote": f"*Adjusted baseline to {selected_year} calendar year and updated dividend metrics to match current portfolio yield."
             },
             "params": [
                 { "key": "portfolio_base", "label": "Portfolio Principal", "value": 100000, "min": 10000, "max": 500000, "step": 5000 },
                 { "key": "div_yield", "label": "Current Dividend Yield (%)", "value": float(div_yield) if div_yield > 0 else 3.5, "min": 0.5, "max": 10.0, "step": 0.1 },
-                { "key": "quarter", "label": "2026 Quarters Elapsed", "value": 4, "min": 1, "max": 4, "step": 1 }
+                { "key": "quarter", "label": f"{selected_year} Quarters Elapsed", "value": 4, "min": 1, "max": 4, "step": 1 }
             ],
             "series": [
                 {
-                    "label": "2026 Cumulative Dividend Income",
+                    "label": f"{selected_year} Cumulative Dividend Income",
                     "colorVar": "#10b981",
                     "formula": "(portfolio_base * (div_yield / 100)) * (t / 4)"
                 }
@@ -176,9 +233,9 @@ def render_deep_dive_tab(ticker_list):
 
         tot_payout = (param_values['portfolio_base'] * (param_values['div_yield'] / 100)) * (param_values['quarter'] / 4)
         s1, s2, s3 = st.columns(3)
-        s1.metric("Current Year", "2026")
+        s1.metric("Target Year", str(selected_year))
         s2.metric("Annual Dividend Yield", f"{param_values['div_yield']:.2f}%")
-        s3.metric("2026 Projected Dividend Income", f"${tot_payout:,.2f}")
+        s3.metric(f"{selected_year} Projected Dividend Income", f"${tot_payout:,.2f}")
 
         st.caption(f"_{overview_model['labels']['footerNote']}_")
         st.markdown("---")

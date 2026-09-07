@@ -1,152 +1,190 @@
+"""
+styles.py - Emerald Neon & Deep Slate Dark Terminal Theme
+"""
+
 import streamlit as st
 
+CUSTOM_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Base Typography */
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace !important;
+}
+
+/* Background Canvas */
+.stApp {
+    background-color: #0b0f19 !important;
+    color: #f1f5f9 !important;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    background-color: #0d1322 !important;
+    border-right: 1px solid #1e293b !important;
+}
+
+/* Top Hero Banner */
+.hero-banner {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(15, 23, 42, 0.9) 100%) !important;
+    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+    border-radius: 12px !important;
+    padding: 20px 24px !important;
+    margin-bottom: 20px !important;
+}
+
+.hero-title {
+    color: #10b981 !important;
+    font-size: 26px !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.03em !important;
+    margin: 0 !important;
+}
+
+.hero-subtitle {
+    color: #94a3b8 !important;
+    font-size: 13px !important;
+    margin-top: 4px !important;
+}
+
+.engine-status-pill {
+    background-color: #111e2e !important;
+    border: 1px solid rgba(16, 185, 129, 0.4) !important;
+    border-radius: 9999px;
+    padding: 6px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #34d399;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.engine-pulse-dot {
+    width: 8px;
+    height: 8px;
+    background-color: #10b981;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #10b981;
+}
+
+/* Cards & Metric Blocks */
+.company-card, 
+div[data-testid="stMetric"], 
+div[data-testid="stContainer"][data-border="true"] {
+    background-color: #111827 !important;
+    border: 1px solid #1f293d !important;
+    border-radius: 10px !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+    padding: 12px 14px !important;
+    overflow: visible !important;
+}
+
+/* Responsive Metric Values (Prevents $1.0... Ellipsis Bug) */
+div[data-testid="stMetricLabel"] p {
+    color: #94a3b8 !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+div[data-testid="stMetricValue"] {
+    overflow: visible !important;
+}
+
+div[data-testid="stMetricValue"] > div {
+    color: #34d399 !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-weight: 700 !important;
+    font-size: clamp(14px, 1.25vw, 22px) !important;
+    letter-spacing: -0.02em;
+    white-space: nowrap !important;
+    text-overflow: clip !important;
+    overflow: visible !important;
+    line-height: 1.2 !important;
+}
+
+/* Meta Badges */
+.meta-tag {
+    background-color: #1e293b !important;
+    border: 1px solid #334155 !important;
+    color: #93c5fd !important;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-block;
+    margin-right: 6px;
+    margin-bottom: 6px;
+}
+
+/* Tab Bar */
+div[data-testid="stTabs"] {
+    border-bottom: 1px solid #1f293d !important;
+    margin-bottom: 20px;
+}
+
+button[data-baseweb="tab"] {
+    color: #94a3b8 !important;
+    border: none !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    padding: 10px 18px !important;
+    border-bottom: 2px solid transparent !important;
+}
+
+button[data-baseweb="tab"]:hover {
+    color: #f8fafc !important;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #34d399 !important;
+    border-bottom: 2px solid #10b981 !important;
+}
+
+/* Form Inputs */
+input, select, div[data-baseweb="select"] {
+    background-color: #0f172a !important;
+    border: 1px solid #1e293b !important;
+    color: #f8fafc !important;
+    border-radius: 6px !important;
+}
+
+/* Green Action Buttons */
+.stButton > button {
+    background: linear-gradient(180deg, #059669 0%, #047857 100%) !important;
+    border: 1px solid #10b981 !important;
+    color: #ffffff !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    padding: 6px 18px !important;
+    transition: all 0.2s ease !important;
+}
+
+.stButton > button:hover {
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.5) !important;
+    transform: translateY(-1px);
+}
+
+/* Dividers */
+hr {
+    border: 0 !important;
+    height: 1px !important;
+    background: #1e293b !important;
+    margin: 28px 0 !important;
+}
+</style>
+"""
+
 def apply_custom_css():
-    st.markdown("""
-    <style>
-        .stApp { background-color: #090d16; color: #e2e8f0; }
-        @keyframes heartbeat {
-            0% { transform: scale(1); opacity: 0.7; }
-            14% { transform: scale(1.3); opacity: 1; filter: drop-shadow(0 0 6px #10b981); }
-            28% { transform: scale(1); opacity: 0.7; }
-            42% { transform: scale(1.3); opacity: 1; filter: drop-shadow(0 0 6px #10b981); }
-            70% { transform: scale(1); opacity: 0.7; }
-            100% { transform: scale(1); opacity: 0.7; }
-        }
-        .heartbeat-pulse {
-            display: inline-block;
-            color: #10b981;
-            font-size: 16px;
-            animation: heartbeat 1.8s infinite ease-in-out;
-            margin-right: 6px;
-        }
-        .sync-status {
-            background: #0f172a;
-            border: 1px solid #059669;
-            border-radius: 20px;
-            padding: 4px 14px;
-            display: inline-flex;
-            align-items: center;
-            font-size: 13px;
-            color: #10b981;
-            font-weight: 600;
-        }
-        .company-card {
-            background-color: #0f172a;
-            border: 1px solid #1e293b;
-            border-left: 4px solid #10b981;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-        .company-card h3 {
-            color: #34d399 !important;
-            margin-top: 0;
-            margin-bottom: 6px;
-            font-size: 22px;
-        }
-        .company-card .meta-tag {
-            display: inline-block;
-            background-color: #1e293b;
-            color: #a7f3d0;
-            padding: 3px 10px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 600;
-            margin-right: 8px;
-            margin-bottom: 12px;
-        }
-        .company-card p {
-            color: #cbd5e1;
-            font-size: 14px;
-            line-height: 1.6;
-            margin-bottom: 0;
-        }
-        section[data-testid="stSidebar"] {
-            background-color: #0b1320;
-            border-right: 1px solid #1e293b;
-        }
-        .sidebar-widget {
-            background-color: #0f172a;
-            border: 1px solid #1e293b;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 15px;
-        }
-        .sidebar-widget-title {
-            color: #10b981;
-            font-weight: 700;
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
-        }
-        div[data-testid="stMetric"] {
-            background-color: #0f172a;
-            border: 1px solid #1e293b;
-            border-left: 4px solid #10b981;
-            padding: 14px 18px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-        }
-        div[data-testid="stMetric"] label { color: #94a3b8 !important; }
-        div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
-            color: #34d399 !important;
-            font-weight: 700;
-        }
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
-            border-bottom: 2px solid #1e293b;
-        }
-        .stTabs [data-baseweb="tab"] {
-            height: 46px;
-            background-color: #0f172a;
-            color: #94a3b8;
-            border-radius: 6px 6px 0px 0px;
-            padding: 8px 18px;
-            font-weight: 600;
-            border: 1px solid #1e293b;
-            border-bottom: none;
-        }
-        .stTabs [aria-selected="true"] {
-            background-color: #059669 !important;
-            color: #ffffff !important;
-            border-color: #059669 !important;
-        }
-        .app-header {
-            background: linear-gradient(135deg, #064e3b 0%, #022c22 100%);
-            border: 1px solid #059669;
-            color: #ffffff;
-            padding: 20px 28px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .app-header h1 {
-            color: #34d399 !important;
-            font-weight: 800;
-            font-size: 26px;
-            margin: 0 0 4px 0;
-        }
-        .app-header p {
-            color: #a7f3d0;
-            font-size: 13px;
-            margin: 0;
-        }
-        .stButton>button {
-            background-color: #059669;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-weight: 600;
-            transition: all 0.2s;
-        }
-        .stButton>button:hover {
-            background-color: #10b981;
-            box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
-        }
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-    </style>
-    """, unsafe_allow_html=True)
+    """Injects the restored Green Terminal styling into Streamlit."""
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)

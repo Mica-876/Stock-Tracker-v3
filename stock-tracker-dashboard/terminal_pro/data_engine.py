@@ -1,5 +1,5 @@
 """
-data_engine.py - Core data retrieval, calculations, and styling templates
+data_engine.py - Core data retrieval, calculations, and chart templates
 """
 
 import streamlit as st
@@ -7,17 +7,16 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-# Obsidian & Chrome Color Palette Constants
-COLOR_CHROME_WHITE = "#ffffff"
-COLOR_SILVER = "#cbd5e1"
-COLOR_SLATE_MUTED = "#64748b"
-COLOR_BG_VOID = "#07080a"
-COLOR_BG_PANEL = "#0e1117"
-COLOR_GRID = "rgba(203, 213, 225, 0.08)"
+# Reverted Green / Dark Theme Palette
+COLOR_TEXT_LIGHT = "#f1f5f9"
+COLOR_MUTED = "#94a3b8"
+COLOR_BG_VOID = "#090d16"
+COLOR_BG_PANEL = "#0f172a"
+COLOR_GRID = "#1e293b"
 
-COLOR_PROFIT = "#10b981"      # Emerald Neon
-COLOR_LOSS = "#f43f5e"        # Crimson
-COLOR_ACCENT_BLUE = "#38bdf8" # Ice Cyan
+COLOR_PROFIT = "#10b981"      # Emerald Green
+COLOR_LOSS = "#ef4444"        # Coral Red
+COLOR_ACCENT_BLUE = "#38bdf8" # Cyan
 COLOR_AMBER = "#f59e0b"       # Amber
 
 def get_dividend_metrics(info, current_price):
@@ -37,41 +36,41 @@ def get_dividend_metrics(info, current_price):
     return float(div_rate), float(div_yield)
 
 def get_plotly_theme():
-    """Returns a unified Obsidian, Chrome & Silver Plotly styling dictionary."""
+    """Returns the dark green-accent Plotly template."""
     return {
         "layout": {
             "paper_bgcolor": COLOR_BG_VOID,
             "plot_bgcolor": COLOR_BG_PANEL,
             "font": {
-                "family": "Inter, -apple-system, sans-serif",
-                "color": COLOR_SILVER,
+                "family": "Inter, sans-serif",
+                "color": COLOR_TEXT_LIGHT,
                 "size": 12
             },
             "title": {
                 "font": {
                     "family": "Inter, sans-serif",
-                    "color": COLOR_CHROME_WHITE,
+                    "color": COLOR_TEXT_LIGHT,
                     "size": 15
                 }
             },
             "xaxis": {
                 "gridcolor": COLOR_GRID,
-                "linecolor": "rgba(203, 213, 225, 0.15)",
-                "tickcolor": "rgba(203, 213, 225, 0.15)",
-                "tickfont": {"color": COLOR_SLATE_MUTED, "size": 10},
-                "title": {"font": {"color": COLOR_SILVER}}
+                "linecolor": COLOR_GRID,
+                "tickcolor": COLOR_GRID,
+                "tickfont": {"color": COLOR_MUTED, "size": 10},
+                "title": {"font": {"color": COLOR_MUTED}}
             },
             "yaxis": {
                 "gridcolor": COLOR_GRID,
-                "linecolor": "rgba(203, 213, 225, 0.15)",
-                "tickcolor": "rgba(203, 213, 225, 0.15)",
-                "tickfont": {"color": COLOR_SLATE_MUTED, "size": 10},
-                "title": {"font": {"color": COLOR_SILVER}}
+                "linecolor": COLOR_GRID,
+                "tickcolor": COLOR_GRID,
+                "tickfont": {"color": COLOR_MUTED, "size": 10},
+                "title": {"font": {"color": COLOR_MUTED}}
             },
             "legend": {
-                "font": {"color": COLOR_SILVER, "size": 11},
-                "bgcolor": "rgba(14, 17, 23, 0.7)",
-                "bordercolor": "rgba(203, 213, 225, 0.12)",
+                "font": {"color": COLOR_TEXT_LIGHT, "size": 11},
+                "bgcolor": "rgba(15, 23, 42, 0.8)",
+                "bordercolor": "#1e293b",
                 "borderwidth": 1
             }
         }
@@ -83,11 +82,9 @@ def fetch_single_ticker_data(ticker):
     sym = ticker.upper().strip()
     stk = yf.Ticker(sym)
 
-    # 1. Fetch recent pricing
     hist_5d = stk.history(period="5d")
     latest_close = float(hist_5d['Close'].iloc[-1]) if not hist_5d.empty else 0.0
 
-    # 2. Extract fast_info safely
     fast_dict = {}
     try:
         fast = getattr(stk, "fast_info", None)
@@ -100,40 +97,29 @@ def fetch_single_ticker_data(ticker):
     except Exception:
         pass
 
-    # 3. Extract info dictionary safely
     try:
         info = stk.info or {}
     except Exception:
         info = {}
 
-    # Asset identification
     quote_type = str(info.get("quoteType") or fast_dict.get("quote_type") or "").upper()
     is_etf = (quote_type in ["ETF", "MUTUALFUND"] or "fundFamily" in info or "category" in info)
 
-    # Current Price
     current_p = fast_dict.get("last_price") or info.get("currentPrice") or info.get("regularMarketPrice") or latest_close
     current_p = float(current_p) if current_p else 0.0
 
-    # Market Cap / Size
-    mkt_cap = (
-        info.get("totalAssets") if is_etf else (fast_dict.get("market_cap") or info.get("marketCap"))
-    )
+    mkt_cap = info.get("totalAssets") if is_etf else (fast_dict.get("market_cap") or info.get("marketCap"))
     mkt_cap_b = (float(mkt_cap) / 1e9) if mkt_cap else 0.0
 
-    # Valuation & Fundamental Multiples
     pe_ratio = info.get("trailingPE") or info.get("forwardPE") or 0.0
     peg_ratio = info.get("pegRatio") or 0.0
     pb_ratio = info.get("priceToBook") or 0.0
     fcf = info.get("freeCashflow")
     fcf_b = (float(fcf) / 1e9) if fcf else 0.0
 
-    # Dividend Metrics
     div_rate, div_yield = get_dividend_metrics(info, current_p)
-
-    # Beta
     beta = info.get("beta") or info.get("beta3Year") or 1.0
 
-    # Sector / Category classification
     raw_sector = info.get("category") if is_etf else info.get("sector")
     if not raw_sector or str(raw_sector).lower() in ["none", "n/a", ""]:
         if sym in ["NVDA", "AAPL", "MSFT", "AMD", "NVTS", "APLD", "TSM"]:

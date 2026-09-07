@@ -20,8 +20,8 @@ SECTOR_COLOR_MAP = {
 }
 
 @st.cache_data(ttl=600, show_spinner=False)
-def fetch_sector_and_beta(ticker):
-    """Fetches sector category and beta metric for a ticker with safe fallbacks."""
+def fetch_sector_and_beta_single(ticker):
+    """Fallback fetcher for single tickers if sector/beta are missing from dataframe."""
     stk = yf.Ticker(ticker)
     info = {}
     try:
@@ -33,10 +33,8 @@ def fetch_sector_and_beta(ticker):
     quote_type = str(info.get("quoteType") or getattr(fast, "quote_type", "")).upper()
     is_etf = (quote_type in ["ETF", "MUTUALFUND"] or "fundFamily" in info or "category" in info)
 
-    # Resolve Sector
     raw_sector = info.get("sector") if not is_etf else info.get("category")
     if not raw_sector or str(raw_sector).lower() in ["none", "n/a", ""]:
-        # Fallback categorization for common benchmark assets
         if ticker.upper() in ["NVDA", "AAPL", "MSFT", "AMD", "NVTS", "APLD"]:
             sector = "Technology"
         elif ticker.upper() in ["CMS", "DTE", "FE", "AEP"]:
@@ -52,7 +50,6 @@ def fetch_sector_and_beta(ticker):
     else:
         sector = str(raw_sector)
 
-    # Resolve Beta
     beta = info.get("beta") or info.get("beta3Year")
     if beta is None:
         try:
@@ -71,16 +68,56 @@ def fetch_sector_and_beta(ticker):
 
     return {"Ticker": ticker.upper(), "Sector": sector, "Beta (5Y)": round(float(beta), 2)}
 
-def render_sector_tab(ticker_list):
+def render_sector_tab(data_input=None):
     st.markdown("### 🍰 Sector Allocation & Risk Breakdown")
     st.caption("Inspect sector concentration, asset diversification, and market sensitivity across the watchlist.")
 
-    if not ticker_list:
+    # 1. Safely handle whether input is a DataFrame (from app.py) or a List of Tickers
+    if data_input is None:
         st.info("Watchlist is currently empty. Add tickers from the control center to analyze sectors.")
         return
 
-    with st.spinner("Analyzing sector allocations and volatility profiles..."):
-        records = [fetch_sector_and_beta(t) for t in ticker_list]
+    records = []
+
+    if isinstance(data_input, pd.DataFrame):
+        if data_input.empty:
+            st.info("Watchlist is currently empty. Add tickers from the control center to analyze sectors.")
+            return
+
+        # Check if Sector and Beta already exist in the passed DataFrame
+        df_cols = [c.lower() for c in data_input.columns]
+        ticker_col = next((c for c in data_input.columns if c.lower() in ["ticker", "symbol"]), None)
+        sector_col = next((c for c in data_input.columns if "sector" in c.lower()), None)
+        beta_col = next((c for c in data_input.columns if "beta" in c.lower()), None)
+
+        if ticker_col:
+            for _, row in data_input.iterrows():
+                t = str(row[ticker_col]).upper().strip()
+                s = str(row[sector_col]) if sector_col and pd.notnull(row[sector_col]) and str(row[sector_col]).lower() not in ["none", "n/a", ""] else None
+                b = row[beta_col] if beta_col and pd.notnull(row[beta_col]) else None
+
+                if s and b is not None:
+                    try:
+                        b_val = float(str(b).replace("x", "").strip())
+                    except Exception:
+                        b_val = 1.0
+                    records.append({"Ticker": t, "Sector": s, "Beta (5Y)": round(b_val, 2)})
+                else:
+                    records.append(fetch_sector_and_beta_single(t))
+        else:
+            st.warning("Could not identify Ticker column in metrics data.")
+            return
+
+    elif isinstance(data_input, list):
+        if len(data_input) == 0:
+            st.info("Watchlist is currently empty. Add tickers from the control center to analyze sectors.")
+            return
+        with st.spinner("Analyzing sector allocations and volatility profiles..."):
+            records = [fetch_sector_and_beta_single(t) for t in data_input]
+
+    else:
+        st.error("Unsupported data format passed to sector view.")
+        return
 
     df = pd.DataFrame(records)
 
@@ -93,9 +130,11 @@ def render_sector_tab(ticker_list):
         sector_counts = df["Sector"].value_counts().reset_index()
         sector_counts.columns = ["Sector", "Count"]
 
-        # Color mapping with dynamic fallback palette for unmapped sectors
-        palette = [SECTOR_COLOR_MAP.get(s, px.colors.qualitative.Vivid[i % len(px.colors.qualitative.Vivid)]) 
-                   for i, s in enumerate(sector_counts["Sector"])]
+        # High-contrast mapping for distinct slices
+        palette = [
+            SECTOR_COLOR_MAP.get(s, px.colors.qualitative.Vivid[i % len(px.colors.qualitative.Vivid)])
+            for i, s in enumerate(sector_counts["Sector"])
+        ]
 
         fig_pie = go.Figure(
             data=[

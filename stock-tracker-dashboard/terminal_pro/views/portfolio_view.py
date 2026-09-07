@@ -35,8 +35,8 @@ def persist_portfolio(portfolio_data):
         storage.save_user_data(portfolio_data)
 
 def render_portfolio_tab(portfolio_data=None, ticker_list=None):
-    st.markdown("### 💼 Portfolio Management & Allocation")
-    st.caption("Manage custom portfolios, track positions, monitor allocations, and maintain profiles.")
+    st.markdown("### 💼 Portfolio Management & Execution Terminal")
+    st.caption("Manage positions, execute buy/sell orders, track realized P&L, and monitor asset allocations.")
 
     # 1. Fallback if app.py calls render_portfolio_tab() without arguments
     if portfolio_data is None:
@@ -49,7 +49,7 @@ def render_portfolio_tab(portfolio_data=None, ticker_list=None):
     if ticker_list is None:
         ticker_list = st.session_state.get("watchlist", ["NVDA", "AAPL", "MSFT", "GOOGL"])
 
-    # 2. Ensure profiles structure exists
+    # 2. Ensure profile structure exists
     if "profiles" not in portfolio_data or not portfolio_data["profiles"]:
         portfolio_data["profiles"] = {
             "Default Portfolio": {
@@ -64,7 +64,7 @@ def render_portfolio_tab(portfolio_data=None, ticker_list=None):
     if "active_profile" not in st.session_state or st.session_state["active_profile"] not in profile_names:
         st.session_state["active_profile"] = profile_names[0]
 
-    # --- PROFILE MANAGEMENT & CONTROLS ---
+    # --- PROFILE MANAGEMENT HUB ---
     with st.expander("⚙️ Manage Portfolio Profiles", expanded=False):
         c_prof1, c_prof2, c_prof3 = st.columns([2, 2, 2])
 
@@ -77,7 +77,7 @@ def render_portfolio_tab(portfolio_data=None, ticker_list=None):
             st.session_state["active_profile"] = active_profile
 
         with c_prof2:
-            new_profile_name = st.text_input("New Profile Name:", placeholder="e.g. Growth ISA / Tech Fund").strip()
+            new_profile_name = st.text_input("New Profile Name:", placeholder="e.g. Dividend Growth ISA").strip()
             if st.button("➕ Create Profile"):
                 if new_profile_name and new_profile_name not in portfolio_data["profiles"]:
                     portfolio_data["profiles"][new_profile_name] = {
@@ -92,7 +92,7 @@ def render_portfolio_tab(portfolio_data=None, ticker_list=None):
                     st.warning("A profile with that name already exists.")
 
         with c_prof3:
-            st.markdown("**Delete Active Profile**")
+            st.markdown("**Delete Profile**")
             can_delete = len(profile_names) > 1
             if can_delete:
                 confirm_delete = st.checkbox(f"Confirm deleting '{active_profile}'", key="delete_confirm_chk")
@@ -104,56 +104,134 @@ def render_portfolio_tab(portfolio_data=None, ticker_list=None):
                     st.success(f"Profile '{active_profile}' successfully removed.")
                     st.rerun()
             else:
-                st.caption("⚠️ Cannot delete the only remaining profile. Create another profile first to remove this one.")
+                st.caption("⚠️ Cannot delete the only remaining profile.")
 
     active_profile = st.session_state["active_profile"]
     current_portfolio = portfolio_data["profiles"][active_profile]
-    positions = current_portfolio.get("positions", {})
+    positions = current_portfolio.setdefault("positions", {})
     cash = float(current_portfolio.get("cash", 0.0))
 
     st.markdown("---")
 
-    # --- ADD OR UPDATE POSITION FORM ---
-    col_pos1, col_pos2, col_pos3, col_pos4 = st.columns([2, 1.5, 1.5, 1.5])
+    # --- TRADE & POSITION ORDER DESK ---
+    st.markdown(f"#### 🎯 Trade & Position Execution ({active_profile})")
 
-    with col_pos1:
-        target_ticker = st.text_input("Asset Ticker (Stock or ETF):", value="NVDA").upper().strip()
+    trade_tab_buy, trade_tab_sell, trade_tab_close = st.tabs(["🟢 Buy / Add Position", "🟠 Sell / Trim Position", "🔴 Liquidate Position"])
 
-    with col_pos2:
-        shares_held = st.number_input("Shares Quantity:", min_value=0.0, value=10.0, step=1.0)
+    with trade_tab_buy:
+        c_b1, c_b2, c_b3, c_b4 = st.columns([1.5, 1.5, 1.5, 1.5])
+        with c_b1:
+            buy_ticker = st.text_input("Asset Ticker (Buy):", value="NVDA", key="buy_tick_in").upper().strip()
+        with c_b2:
+            buy_shares = st.number_input("Shares to Buy:", min_value=0.01, value=10.0, step=1.0, key="buy_sh_in")
+        with c_b3:
+            buy_price = st.number_input("Purchase Price ($):", min_value=0.01, value=120.0, step=5.0, key="buy_px_in")
+        with c_b4:
+            st.write("")
+            st.write("")
+            deduct_cash = st.checkbox("Deduct from Cash balance", value=True, key="chk_deduct_cash")
+            if st.button("Confirm Buy Order", key="btn_confirm_buy"):
+                total_cost = buy_shares * buy_price
+                if deduct_cash and total_cost > cash:
+                    st.error(f"Insufficient cash. Required: ${total_cost:,.2f}, Available: ${cash:,.2f}")
+                else:
+                    if buy_ticker in positions:
+                        # Weighted average cost basis calculation
+                        old_shares = float(positions[buy_ticker].get("shares", 0))
+                        old_cost = float(positions[buy_ticker].get("avg_cost", 0))
+                        new_shares = old_shares + buy_shares
+                        new_cost = ((old_shares * old_cost) + total_cost) / new_shares
+                        positions[buy_ticker] = {"shares": new_shares, "avg_cost": new_cost}
+                    else:
+                        positions[buy_ticker] = {"shares": buy_shares, "avg_cost": buy_price}
 
-    with col_pos3:
-        avg_cost = st.number_input("Average Cost Basis ($):", min_value=0.0, value=110.0, step=5.0)
+                    if deduct_cash:
+                        current_portfolio["cash"] = cash - total_cost
 
-    with col_pos4:
-        st.write("")
-        st.write("")
-        if st.button("💾 Save Position"):
-            if target_ticker and shares_held > 0:
-                current_portfolio["positions"][target_ticker] = {
-                    "shares": shares_held,
-                    "avg_cost": avg_cost
-                }
-                persist_portfolio(portfolio_data)
-                st.success(f"Saved {shares_held} shares of {target_ticker} to '{active_profile}'.")
-                st.rerun()
-            elif target_ticker and shares_held == 0:
-                if target_ticker in current_portfolio["positions"]:
-                    del current_portfolio["positions"][target_ticker]
                     persist_portfolio(portfolio_data)
-                    st.info(f"Removed {target_ticker} from positions.")
+                    st.success(f"Executed BUY for {buy_shares} {buy_ticker} at ${buy_price:.2f}.")
                     st.rerun()
 
-    # --- CASH BALANCE MANAGEMENT ---
-    c_cash1, c_cash2 = st.columns([2, 4])
-    with c_cash1:
-        new_cash = st.number_input(f"Unallocated Cash for '{active_profile}' ($):", min_value=0.0, value=cash, step=500.0)
-        if new_cash != cash:
-            current_portfolio["cash"] = float(new_cash)
-            persist_portfolio(portfolio_data)
-            st.rerun()
+    with trade_tab_sell:
+        if positions:
+            c_s1, c_s2, c_s3, c_s4 = st.columns([1.5, 1.5, 1.5, 1.5])
+            with c_s1:
+                sell_ticker = st.selectbox("Select Asset to Sell:", options=list(positions.keys()), key="sell_tick_in")
+                avail_shares = float(positions[sell_ticker].get("shares", 0.0))
+                cost_basis_each = float(positions[sell_ticker].get("avg_cost", 0.0))
+                st.caption(f"Held: **{avail_shares:,.2f}** shares (Cost Basis: **${cost_basis_each:.2f}**)")
+            with c_s2:
+                sell_shares = st.number_input("Shares to Sell:", min_value=0.01, max_value=avail_shares, value=min(10.0, avail_shares), step=1.0, key="sell_sh_in")
+            with c_s3:
+                sell_price = st.number_input("Sale Execution Price ($):", min_value=0.01, value=cost_basis_each, step=5.0, key="sell_px_in")
+            with c_s4:
+                st.write("")
+                st.write("")
+                credit_cash = st.checkbox("Credit Proceeds to Cash", value=True, key="chk_credit_cash")
+                if st.button("Confirm Sell Order", key="btn_confirm_sell"):
+                    proceeds = sell_shares * sell_price
+                    realized_pnl = (sell_price - cost_basis_each) * sell_shares
+                    remaining_sh = avail_shares - sell_shares
 
-    # --- PORTFOLIO TABLE & VALUATION ENGINE ---
+                    if remaining_sh <= 0.0001:
+                        del positions[sell_ticker]
+                    else:
+                        positions[sell_ticker]["shares"] = remaining_sh
+
+                    if credit_cash:
+                        current_portfolio["cash"] = cash + proceeds
+
+                    persist_portfolio(portfolio_data)
+                    st.success(f"Sold {sell_shares:,.2f} of {sell_ticker} at ${sell_price:.2f}. Realized P&L: ${realized_pnl:+,.2f}.")
+                    st.rerun()
+        else:
+            st.info("No active positions available to sell.")
+
+    with trade_tab_close:
+        if positions:
+            c_cl1, c_cl2 = st.columns([2, 2])
+            with c_cl1:
+                close_ticker = st.selectbox("Position to Liquidate (100%):", options=list(positions.keys()), key="close_tick_in")
+                c_sh = float(positions[close_ticker].get("shares", 0.0))
+                c_cost = float(positions[close_ticker].get("avg_cost", 0.0))
+                st.caption(f"Currently holding: **{c_sh:,.2f}** shares")
+            with c_cl2:
+                st.write("")
+                st.write("")
+                if st.button(f"🚨 Liquidate Entire {close_ticker} Position"):
+                    # Pull live price to calculate proceeds
+                    stk = yf.Ticker(close_ticker)
+                    fast = getattr(stk, "fast_info", None)
+                    p = getattr(fast, "last_price", None)
+                    if p is None:
+                        try:
+                            h = stk.history(period="1d")
+                            p = float(h['Close'].iloc[-1]) if not h.empty else c_cost
+                        except Exception:
+                            p = c_cost
+
+                    total_proceeds = c_sh * float(p)
+                    current_portfolio["cash"] = cash + total_proceeds
+                    del positions[close_ticker]
+                    persist_portfolio(portfolio_data)
+                    st.success(f"Closed out {close_ticker}. Deposited ${total_proceeds:,.2f} back into Cash.")
+                    st.rerun()
+        else:
+            st.info("No positions currently held to liquidate.")
+
+    st.markdown("---")
+
+    # --- CASH MANAGEMENT ---
+    with st.expander("💵 Adjust Cash Balance Directly", expanded=False):
+        c_cash1, c_cash2 = st.columns([2, 4])
+        with c_cash1:
+            new_cash = st.number_input(f"Cash Reserve for '{active_profile}' ($):", min_value=0.0, value=cash, step=500.0)
+            if new_cash != cash:
+                current_portfolio["cash"] = float(new_cash)
+                persist_portfolio(portfolio_data)
+                st.rerun()
+
+    # --- PORTFOLIO VALUATION ENGINE ---
     portfolio_rows = []
     total_market_val = 0.0
     total_cost_basis = 0.0
@@ -165,7 +243,7 @@ def render_portfolio_tab(portfolio_data=None, ticker_list=None):
             cost = float(pos.get("avg_cost", 0))
             cost_val = sh * cost
 
-            # Live price extraction with fallbacks
+            # Live price extraction with resilient fallback
             stk = yf.Ticker(ticker)
             fast = getattr(stk, "fast_info", None)
             cur_p = None
@@ -216,23 +294,21 @@ def render_portfolio_tab(portfolio_data=None, ticker_list=None):
     overall_return = (total_pnl / total_cost_basis) * 100 if total_cost_basis > 0 else 0.0
     portfolio_yield = (total_annual_dividends / total_market_val) * 100 if total_market_val > 0 else 0.0
 
-    st.markdown("---")
-
     # --- TOP LEVEL METRICS BAR ---
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Portfolio Value", f"${total_portfolio_worth:,.2f}", help="Includes equity market value and unallocated cash.")
+    m1.metric("Total Portfolio Value", f"${total_portfolio_worth:,.2f}", help="Total equity value + Cash reserve.")
     m2.metric("Unrealized P&L", f"${total_pnl:+,.2f}", f"{overall_return:+.2f}%")
     m3.metric("Annual Dividend Income", f"${total_annual_dividends:,.2f}", f"{portfolio_yield:.2f}% Yield")
     m4.metric("Cash Reserve", f"${current_portfolio.get('cash', 0.0):,.2f}")
 
-    # --- VISUAL ALLOCATION & BREAKDOWN ---
+    # --- HOLDINGS TABLE & PIE CHART ---
     if portfolio_rows:
         df_display = pd.DataFrame(portfolio_rows)
 
         col_table, col_pie = st.columns([3, 2])
 
         with col_table:
-            st.markdown(f"#### 📋 Positions in {active_profile}")
+            st.markdown(f"#### 📋 Current Holdings ({active_profile})")
             formatted_df = pd.DataFrame({
                 "Ticker": df_display["Ticker"],
                 "Shares": df_display["Shares"].map("{:,.2f}".format),
@@ -267,16 +343,5 @@ def render_portfolio_tab(portfolio_data=None, ticker_list=None):
                 legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
             )
             st.plotly_chart(fig_pie, width="stretch")
-
-        # Quick Delete Action Per Position
-        st.markdown("##### Manage Individual Positions")
-        del_cols = st.columns(len(positions) if len(positions) <= 6 else 6)
-        for i, tick in enumerate(list(positions.keys())):
-            col_idx = i % 6
-            with del_cols[col_idx]:
-                if st.button(f"Remove {tick}", key=f"del_pos_{tick}"):
-                    del current_portfolio["positions"][tick]
-                    persist_portfolio(portfolio_data)
-                    st.rerun()
     else:
-        st.info(f"No positions added to '{active_profile}' yet. Enter an asset ticker and quantity above to begin tracking.")
+        st.info(f"No positions open in '{active_profile}'. Use the Buy desk above to add your first position.")

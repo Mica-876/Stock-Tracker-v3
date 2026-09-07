@@ -4,25 +4,48 @@ import yfinance as yf
 import plotly.graph_objects as go
 from data_engine import get_dividend_metrics
 
-def get_security_profile(ticker):
-    """Fetches robust data with fallbacks for both Equity and ETF securities."""
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_security_raw(ticker):
+    """Caches the raw ticker calls for 5 minutes to avoid Yahoo Cloud rate-limits."""
     stk = yf.Ticker(ticker)
     
-    # 1. Fetch historical data first to ensure we have actual live prices
-    hist_recent = stk.history(period="5d")
-    latest_close = float(hist_recent['Close'].iloc[-1]) if not hist_recent.empty else 0.0
-
-    # 2. Extract fast_info (much more reliable and unthrottled on cloud servers)
-    fast = getattr(stk, "fast_info", {})
-    
-    # 3. Extract regular info safely
+    # 1. Fetch recent price action
+    try:
+        hist_recent = stk.history(period="5d")
+    except Exception:
+        hist_recent = pd.DataFrame()
+        
+    # 2. Fetch full info dictionary
     try:
         info = stk.info or {}
     except Exception:
         info = {}
+        
+    # 3. Fetch fast_info safely
+    fast_dict = {}
+    try:
+        fast = getattr(stk, "fast_info", None)
+        if fast is not None:
+            for attr in ["last_price", "market_cap", "year_high", "year_low", "currency", "quote_type"]:
+                try:
+                    fast_dict[attr] = getattr(fast, attr, None)
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
-    # Identify whether asset is an ETF or Equity
-    quote_type = str(info.get("quoteType", "") or getattr(fast, "quote_type", "")).upper()
+    return info, fast_dict, hist_recent
+
+def get_security_profile(ticker):
+    """Processes cached data with fallbacks for both Equity and ETF securities."""
+    ticker_clean = ticker.upper().strip()
+    stk = yf.Ticker(ticker_clean)
+    info, fast_dict, hist_recent = fetch_security_raw(ticker_clean)
+
+    latest_close = float(hist_recent['Close'].iloc[-1]) if not hist_recent.empty else 0.0
+
+    # Determine security type
+    quote_type = str(info.get("quoteType") or fast_dict.get("quote_type") or "").upper()
     is_etf = (
         quote_type in ["ETF", "MUTUALFUND"]
         or "fundFamily" in info
@@ -30,9 +53,9 @@ def get_security_profile(ticker):
         or info.get("legalType") == "Exchange Traded Fund"
     )
 
-    # Determine Price with bulletproof fallback
+    # Determine current price with fallback hierarchy
     current_price = (
-        getattr(fast, "last_price", None)
+        fast_dict.get("last_price")
         or info.get("currentPrice")
         or info.get("regularMarketPrice")
         or info.get("navPrice")
@@ -40,31 +63,31 @@ def get_security_profile(ticker):
     )
     current_price = float(current_price) if current_price else 0.0
 
-    # Determine Size (AUM for ETF, Market Cap for Equities)
+    # Determine size (Market Cap for Stocks, AUM for ETFs)
     if is_etf:
         size_val = (
             info.get("totalAssets")
-            or getattr(fast, "market_cap", None)
+            or fast_dict.get("market_cap")
             or info.get("marketCap")
         )
-        size_label = "Fund AUM / Assets"
+        size_label = "Fund AUM"
     else:
-        size_val = getattr(fast, "market_cap", None) or info.get("marketCap")
+        size_val = fast_dict.get("market_cap") or info.get("marketCap")
         size_label = "Market Cap"
 
     # 52-Week Range
-    high_52 = getattr(fast, "year_high", None) or info.get("fiftyTwoWeekHigh")
-    low_52 = getattr(fast, "year_low", None) or info.get("fiftyTwoWeekLow")
+    high_52 = fast_dict.get("year_high") or info.get("fiftyTwoWeekHigh")
+    low_52 = fast_dict.get("year_low") or info.get("fiftyTwoWeekLow")
 
     # Valuation & Multiples
     pe_ratio = info.get("trailingPE") or info.get("forwardPE")
     beta = info.get("beta") or info.get("beta3Year")
 
-    # Margin / Expense Structure
+    # Margin or Expense Ratio
     if is_etf:
         expense_ratio = info.get("annualReportExpenseRatio") or info.get("expenseRatio")
         if expense_ratio is not None:
-            special_metric = f"{expense_ratio * 100:.2f}% (Expense Ratio)" if expense_ratio < 1 else f"{expense_ratio:.2f}% (Expense Ratio)"
+            special_metric = f"{expense_ratio * 100:.2f}% (Exp. Ratio)" if expense_ratio < 1 else f"{expense_ratio:.2f}% (Exp. Ratio)"
         else:
             special_metric = "N/A"
     else:
@@ -74,15 +97,19 @@ def get_security_profile(ticker):
         else:
             special_metric = "N/A"
 
-    # Dividend calculation
+    # Sector / Category cleanup
+    raw_cat = info.get("category") if is_etf else info.get("sector")
+    category = str(raw_cat) if raw_cat and str(raw_cat).lower() != "none" else ("General ETF" if is_etf else "General Equity")
+
+    # Dividend metrics
     div_rate, div_yield = get_dividend_metrics(info, current_price)
 
     profile = {
-        "ticker": ticker.upper(),
-        "name": info.get("longName") or info.get("shortName") or ticker.upper(),
+        "ticker": ticker_clean,
+        "name": info.get("longName") or info.get("shortName") or ticker_clean,
         "type": "ETF" if is_etf else "Equity",
         "price": current_price,
-        "currency": info.get("currency", "USD") or "USD",
+        "currency": fast_dict.get("currency") or info.get("currency") or "USD",
         "size_label": size_label,
         "size_val": float(size_val) if size_val else None,
         "pe_ratio": float(pe_ratio) if pe_ratio else None,
@@ -91,8 +118,7 @@ def get_security_profile(ticker):
         "52w_low": float(low_52) if low_52 else None,
         "div_yield": div_yield,
         "special_metric": special_metric,
-        "category": info.get("category") if is_etf else info.get("sector", "N/A"),
-        "industry": info.get("fundFamily") if is_etf else info.get("industry", "N/A")
+        "category": category
     }
 
     return stk, profile
@@ -100,7 +126,7 @@ def get_security_profile(ticker):
 
 def render_comparison_tab(ticker_list):
     st.markdown("### ⚖️ Head-to-Head Comparison: Stocks & ETFs")
-    st.caption("Benchmark corporate equities directly against major sector or index ETFs.")
+    st.caption("Benchmark corporate equities directly against index or sector ETFs.")
 
     c_in1, c_in2, c_in3 = st.columns([2, 2, 1.5])
     with c_in1:
@@ -128,19 +154,15 @@ def render_comparison_tab(ticker_list):
 
     # --- TOP LEVEL SUMMARY CARDS ---
     card1, card2 = st.columns(2)
-    for col, data, accent in zip([card1, card2], [data_a, data_b], ["#10b981", "#38bdf8"]):
+    for col, data, border_color in zip([card1, card2], [data_a, data_b], ["#10b981", "#38bdf8"]):
         with col:
-            st.markdown(f"""
-            <div class="company-card" style="border-left: 4px solid {accent};">
-                <h3 style="margin-bottom: 4px;">{data['name']} ({data['ticker']})</h3>
-                <div style="margin-bottom: 8px;">
-                    <span class="meta-tag">Type: {data['type']}</span>
-                    <span class="meta-tag">Sector/Class: {data['category']}</span>
-                    {f'<span class="meta-tag">{data["industry"]}</span>' if data["industry"] != "N/A" else ''}
-                </div>
-                <h2 style="color: {accent}; margin: 8px 0 0 0;">${data['price']:.2f} <span style="font-size: 14px; color: #94a3b8;">{data['currency']}</span></h2>
-            </div>
-            """, unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(f"<h4 style='margin:0; color:{border_color};'>{data['name']} ({data['ticker']})</h4>", unsafe_allow_html=True)
+                st.caption(f"Asset Type: **{data['type']}** | Category: **{data['category']}**")
+                st.metric(
+                    label=f"Current Price ({data['currency']})",
+                    value=f"${data['price']:,.2f}" if data['price'] > 0 else "N/A"
+                )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -152,7 +174,6 @@ def render_comparison_tab(ticker_list):
     hist_b = stk_b.history(period=timeframe)
 
     if not hist_a.empty and not hist_b.empty:
-        # Align timestamps
         aligned_df = pd.DataFrame({
             data_a['ticker']: hist_a['Close'],
             data_b['ticker']: hist_b['Close']
@@ -199,7 +220,7 @@ def render_comparison_tab(ticker_list):
             r2.metric(f"{data_b['ticker']} Return", f"{ret_b:+.2f}%")
             r3.metric("Spread / Outperformance", f"{delta:+.2f}%", help=f"Positive indicates {data_a['ticker']} outperformed {data_b['ticker']}.")
     else:
-        st.warning("Could not pull matching historical data for this timeframe.")
+        st.warning("Could not pull matching historical price series for this timeframe.")
 
     st.markdown("---")
 
@@ -224,9 +245,9 @@ def render_comparison_tab(ticker_list):
 
     matrix_rows = [
         ("Asset Classification", data_a['type'], data_b['type']),
-        ("Sector / Sub-Category", str(data_a['category']), str(data_b['category'])),
+        ("Sector / Sub-Category", data_a['category'], data_b['category']),
         ("Current Price", f"${data_a['price']:.2f}", f"${data_b['price']:.2f}"),
-        ("Size (Market Cap / Fund AUM)", format_size(data_a['size_val']), format_size(data_b['size_val'])),
+        (f"Size ({data_a['size_label']} / {data_b['size_label']})", format_size(data_a['size_val']), format_size(data_b['size_val'])),
         ("P/E Ratio (Trailing/Fwd)", format_val(data_a['pe_ratio']), format_val(data_b['pe_ratio'])),
         ("Dividend Yield (%)", format_val(data_a['div_yield'], suffix="%"), format_val(data_b['div_yield'], suffix="%")),
         ("Beta (Market Sensitivity)", format_val(data_a['beta']), format_val(data_b['beta'])),

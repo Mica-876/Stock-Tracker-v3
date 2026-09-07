@@ -1,10 +1,28 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import yfinance as yf
-from storage import save_portfolio_data
-from data_engine import get_dividend_metrics
+
+# Safe modular import for storage functions
+try:
+    import storage
+except ImportError:
+    from .. import storage
+
+# Safe modular import for dividend engine
+try:
+    from data_engine import get_dividend_metrics
+except ImportError:
+    from ..data_engine import get_dividend_metrics
+
+def persist_portfolio(portfolio_data):
+    """Safely dispatches to whichever save function exists in storage.py."""
+    if hasattr(storage, "save_portfolio_data"):
+        storage.save_portfolio_data(portfolio_data)
+    elif hasattr(storage, "save_data"):
+        storage.save_data(portfolio_data)
+    elif hasattr(storage, "save_user_data"):
+        storage.save_user_data(portfolio_data)
 
 def render_portfolio_tab(portfolio_data, ticker_list):
     st.markdown("### 💼 Portfolio Management & Allocation")
@@ -45,7 +63,7 @@ def render_portfolio_tab(portfolio_data, ticker_list):
                         "cash": 10000.0,
                         "positions": {}
                     }
-                    save_portfolio_data(portfolio_data)
+                    persist_portfolio(portfolio_data)
                     st.session_state["active_profile"] = new_profile_name
                     st.success(f"Profile '{new_profile_name}' created.")
                     st.rerun()
@@ -59,7 +77,7 @@ def render_portfolio_tab(portfolio_data, ticker_list):
                 confirm_delete = st.checkbox(f"Confirm deleting '{active_profile}'", key="delete_confirm_chk")
                 if st.button("🗑️ Delete Profile", disabled=not confirm_delete):
                     del portfolio_data["profiles"][active_profile]
-                    save_portfolio_data(portfolio_data)
+                    persist_portfolio(portfolio_data)
                     remaining_profiles = list(portfolio_data["profiles"].keys())
                     st.session_state["active_profile"] = remaining_profiles[0]
                     st.success(f"Profile '{active_profile}' successfully removed.")
@@ -95,13 +113,13 @@ def render_portfolio_tab(portfolio_data, ticker_list):
                     "shares": shares_held,
                     "avg_cost": avg_cost
                 }
-                save_portfolio_data(portfolio_data)
+                persist_portfolio(portfolio_data)
                 st.success(f"Saved {shares_held} shares of {target_ticker} to '{active_profile}'.")
                 st.rerun()
             elif target_ticker and shares_held == 0:
                 if target_ticker in current_portfolio["positions"]:
                     del current_portfolio["positions"][target_ticker]
-                    save_portfolio_data(portfolio_data)
+                    persist_portfolio(portfolio_data)
                     st.info(f"Removed {target_ticker} from positions.")
                     st.rerun()
 
@@ -111,7 +129,7 @@ def render_portfolio_tab(portfolio_data, ticker_list):
         new_cash = st.number_input(f"Unallocated Cash for '{active_profile}' ($):", min_value=0.0, value=cash, step=500.0)
         if new_cash != cash:
             current_portfolio["cash"] = float(new_cash)
-            save_portfolio_data(portfolio_data)
+            persist_portfolio(portfolio_data)
             st.rerun()
 
     # --- PORTFOLIO TABLE & VALUATION ENGINE ---
@@ -126,10 +144,15 @@ def render_portfolio_tab(portfolio_data, ticker_list):
             cost = float(pos.get("avg_cost", 0))
             cost_val = sh * cost
 
-            # Fetch live pricing with fallback
+            # Live price extraction with fallbacks
             stk = yf.Ticker(ticker)
             fast = getattr(stk, "fast_info", None)
-            cur_p = getattr(fast, "last_price", None)
+            cur_p = None
+            if fast is not None:
+                try:
+                    cur_p = getattr(fast, "last_price", None)
+                except Exception:
+                    pass
             
             if cur_p is None:
                 try:
@@ -142,7 +165,7 @@ def render_portfolio_tab(portfolio_data, ticker_list):
             unrealized_gain = market_val - cost_val
             gain_pct = (unrealized_gain / cost_val) * 100 if cost_val > 0 else 0.0
 
-            # Dividends
+            # Dividend calculation
             try:
                 info = stk.info or {}
             except Exception:
@@ -232,7 +255,7 @@ def render_portfolio_tab(portfolio_data, ticker_list):
             with del_cols[col_idx]:
                 if st.button(f"Remove {tick}", key=f"del_pos_{tick}"):
                     del current_portfolio["positions"][tick]
-                    save_portfolio_data(portfolio_data)
+                    persist_portfolio(portfolio_data)
                     st.rerun()
     else:
         st.info(f"No positions added to '{active_profile}' yet. Enter an asset ticker and quantity above to begin tracking.")

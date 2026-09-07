@@ -2,6 +2,8 @@
 styles.py - Obsidian, Brushed Chrome & Liquid Silver Theme
 """
 
+import streamlit as st
+
 CUSTOM_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Inter:wght@300;400;500;600;700&display=swap');
@@ -216,3 +218,7 @@ hr {
 }
 </style>
 """
+
+def apply_custom_css():
+    """Injects the Obsidian, Chrome and Silver custom styling into Streamlit."""
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)

@@ -68,7 +68,7 @@ def render_deep_dive_tab(ticker_list):
     location = f"{city}, {country}".strip(", ") if (city or country) else "Global"
     summary = info.get("longBusinessSummary") or "No business summary or prospectus available for this ticker."
 
-    # Native Card Container: eliminates raw HTML injection and string escape crashes
+    # Native Card Container: avoids raw HTML escaping bugs
     with st.container(border=True):
         h_col1, h_col2 = st.columns([3, 1])
         with h_col1:
@@ -318,67 +318,111 @@ def render_deep_dive_tab(ticker_list):
     st.caption(f"_{overview_model['labels']['footerNote']}_")
     st.markdown("---")
 
-    # --- HISTORICAL PRICE ACTION ---
-    start_date = f"{selected_year}-01-01"
+    # --- HISTORICAL PRICE ACTION & 50 / 150 / 200 SMA ---
+    # Query with a lookback window of 365 calendar days before selected_year so 200-day rolling SMA is fully primed
+    extended_start = f"{int(selected_year) - 1}-01-01"
     end_date = f"{selected_year}-12-31"
-    hist = stk.history(start=start_date, end=end_date)
+    hist_raw = stk.history(start=extended_start, end=end_date)
 
-    if not hist.empty:
-        hist["50_SMA"] = hist["Close"].rolling(window=50).mean()
-        hist["200_SMA"] = hist["Close"].rolling(window=200).mean()
+    if not hist_raw.empty:
+        # Calculate moving averages across the continuous dataset
+        hist_raw["50_SMA"] = hist_raw["Close"].rolling(window=50).mean()
+        hist_raw["150_SMA"] = hist_raw["Close"].rolling(window=150).mean()
+        hist_raw["200_SMA"] = hist_raw["Close"].rolling(window=200).mean()
 
-        start_p = hist['Close'].iloc[0]
-        end_p = hist['Close'].iloc[-1]
-        year_return = ((end_p - start_p) / start_p) * 100
-        high_p = hist['High'].max()
-        low_p = hist['Low'].min()
+        # Slice to only display data for selected_year
+        target_year_start = f"{selected_year}-01-01"
+        hist = hist_raw.loc[hist_raw.index >= target_year_start].copy()
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Start Price", f"${start_p:.2f}")
-        m2.metric("Current / End Price", f"${end_p:.2f}", f"{year_return:.2f}%")
-        m3.metric(f"{selected_year} High", f"${high_p:.2f}")
-        m4.metric(f"{selected_year} Low", f"${low_p:.2f}")
+        if not hist.empty:
+            start_p = hist['Close'].iloc[0]
+            end_p = hist['Close'].iloc[-1]
+            year_return = ((end_p - start_p) / start_p) * 100
+            high_p = hist['High'].max()
+            low_p = hist['Low'].min()
 
-        st.markdown("<br>", unsafe_allow_html=True)
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Start Price", f"${start_p:.2f}")
+            m2.metric("Current / End Price", f"${end_p:.2f}", f"{year_return:.2f}%")
+            m3.metric(f"{selected_year} High", f"${high_p:.2f}")
+            m4.metric(f"{selected_year} Low", f"${low_p:.2f}")
 
-        fig = go.Figure()
-        if chart_style == "Line Chart with Moving Averages":
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['Close'], mode='lines', name='Close Price', line=dict(color='#10b981', width=2.5)))
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['50_SMA'], mode='lines', name='50-Day SMA', line=dict(color='#f59e0b', width=1.5)))
-            fig.add_trace(go.Scatter(x=hist.index, y=hist['200_SMA'], mode='lines', name='200-Day SMA', line=dict(color='#ef4444', width=1.5)))
-        else:
-            fig.add_trace(go.Candlestick(
-                x=hist.index,
-                open=hist['Open'],
-                high=hist['High'],
-                low=hist['Low'],
-                close=hist['Close'],
-                name=selected_stock
-            ))
+            st.markdown("<br>", unsafe_allow_html=True)
 
-        fig.update_layout(
-            title=f"{selected_stock} - Performance ({selected_year})",
-            hovermode="x unified",
-            yaxis_title="Price ($)",
-            template="plotly_dark",
-            paper_bgcolor='#090d16',
-            plot_bgcolor='#0f172a',
-            margin=dict(l=20, r=20, t=40, b=20)
-        )
-        st.plotly_chart(fig, width="stretch")
+            fig = go.Figure()
+            if chart_style == "Line Chart with Moving Averages":
+                # Primary Close Price
+                fig.add_trace(go.Scatter(
+                    x=hist.index,
+                    y=hist['Close'],
+                    mode='lines',
+                    name='Close Price',
+                    line=dict(color='#10b981', width=2.5)
+                ))
+                # 50-Day SMA (Amber)
+                fig.add_trace(go.Scatter(
+                    x=hist.index,
+                    y=hist['50_SMA'],
+                    mode='lines',
+                    name='50-Day SMA',
+                    line=dict(color='#f59e0b', width=1.75)
+                ))
+                # 150-Day SMA (Cyan Blue)
+                fig.add_trace(go.Scatter(
+                    x=hist.index,
+                    y=hist['150_SMA'],
+                    mode='lines',
+                    name='150-Day SMA',
+                    line=dict(color='#38bdf8', width=1.75)
+                ))
+                # 200-Day SMA (Coral Red)
+                fig.add_trace(go.Scatter(
+                    x=hist.index,
+                    y=hist['200_SMA'],
+                    mode='lines',
+                    name='200-Day SMA',
+                    line=dict(color='#ef4444', width=2.0)
+                ))
+            else:
+                fig.add_trace(go.Candlestick(
+                    x=hist.index,
+                    open=hist['Open'],
+                    high=hist['High'],
+                    low=hist['Low'],
+                    close=hist['Close'],
+                    name=selected_stock
+                ))
 
-        # Monthly Gains
-        st.markdown(f"#### 📅 {selected_stock} Monthly Breakdown ({selected_year})")
-        hist_monthly = stk.history(start=start_date, end=end_date, interval="1mo")
+            fig.update_layout(
+                title=f"{selected_stock} - Performance ({selected_year})",
+                hovermode="x unified",
+                yaxis_title="Price ($)",
+                template="plotly_dark",
+                paper_bgcolor='#090d16',
+                plot_bgcolor='#0f172a',
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                ),
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig, width="stretch")
 
-        if not hist_monthly.empty and len(hist_monthly) >= 2:
-            hist_monthly["Monthly Return (%)"] = hist_monthly["Close"].pct_change() * 100
-            monthly_df = pd.DataFrame({
-                "Month": [d.strftime("%B") for d in hist_monthly.index],
-                "Close Price ($)": [f"${p:.2f}" for p in hist_monthly["Close"]],
-                "Monthly Gain (%)": [f"{r:.2f}%" if pd.notnull(r) else "0.00%" for r in hist_monthly["Monthly Return (%)"]]
-            })
-            st.dataframe(monthly_df, width="stretch", hide_index=True)
+            # Monthly Breakdown
+            st.markdown(f"#### 📅 {selected_stock} Monthly Breakdown ({selected_year})")
+            hist_monthly = stk.history(start=target_year_start, end=end_date, interval="1mo")
+
+            if not hist_monthly.empty and len(hist_monthly) >= 2:
+                hist_monthly["Monthly Return (%)"] = hist_monthly["Close"].pct_change() * 100
+                monthly_df = pd.DataFrame({
+                    "Month": [d.strftime("%B") for d in hist_monthly.index],
+                    "Close Price ($)": [f"${p:.2f}" for p in hist_monthly["Close"]],
+                    "Monthly Gain (%)": [f"{r:.2f}%" if pd.notnull(r) else "0.00%" for r in hist_monthly["Monthly Return (%)"]]
+                })
+                st.dataframe(monthly_df, width="stretch", hide_index=True)
 
         # News Feed (Modern Nested Payload Parser)
         st.markdown("---")

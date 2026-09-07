@@ -53,7 +53,6 @@ def render_deep_dive_tab(ticker_list):
         except Exception:
             financials_df, balance_sheet_df, cashflow_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-        # Find matching column for the selected year
         def get_col_for_year(df, yr):
             if df is not None and not df.empty:
                 for col in df.columns:
@@ -75,7 +74,6 @@ def render_deep_dive_tab(ticker_list):
         if is_historical_year:
             st.caption(f"Showing filed audited statements for FY **{selected_year}**")
             
-            # Helper safely extract line item
             def get_item(df, target_col, keys):
                 if df is not None and not df.empty and target_col in df.columns:
                     for k in keys:
@@ -96,7 +94,7 @@ def render_deep_dive_tab(ticker_list):
             roe = (net_income / stockholder_equity) if (net_income and stockholder_equity and stockholder_equity > 0) else None
             
             operating_cash = get_item(cashflow_df, col_cf, ["Operating Cash Flow", "Cash Flows from Operating Activities"])
-            forward_pe = None  # Forward P/E is strictly forward-looking
+            forward_pe = None
         else:
             st.caption(f"Filed full-year statement unavailable for **{selected_year}**. Displaying latest TTM metrics.")
             rev = info.get("totalRevenue", None)
@@ -302,19 +300,41 @@ def render_deep_dive_tab(ticker_list):
                 })
                 st.dataframe(monthly_df, width="stretch", hide_index=True)
 
-            # News Feed
+            # News Feed (Modern Nested Payload Parser)
             st.markdown("---")
             st.markdown(f"#### 📰 Recent Headlines for {selected_stock}")
             try:
                 news_items = stk.news
                 if news_items:
-                    for item in news_items[:5]:
-                        title = item.get("title", "No Title")
-                        link = item.get("link", "#")
-                        publisher = item.get("publisher", "Unknown")
-                        st.write(f"• **[{title}]({link})** — *{publisher}*")
+                    valid_news_count = 0
+                    for item in news_items:
+                        content = item.get("content", item)
+                        
+                        title = content.get("title")
+                        link = (
+                            content.get("clickThroughUrl", {}).get("url")
+                            or content.get("canonicalUrl", {}).get("url")
+                            or content.get("link")
+                            or item.get("link")
+                            or "#"
+                        )
+                        
+                        provider = content.get("provider", {})
+                        publisher = provider.get("displayName") if isinstance(provider, dict) else content.get("publisher", "Yahoo Finance")
+                        
+                        pub_date = content.get("pubDate", "")
+                        time_str = f" • *{pub_date[:10]}*" if pub_date else ""
+
+                        if title:
+                            st.markdown(f"• **[{title}]({link})** — *{publisher}*{time_str}")
+                            valid_news_count += 1
+                            if valid_news_count >= 5:
+                                break
+                    
+                    if valid_news_count == 0:
+                        st.info(f"No recent headlines formatted for {selected_stock}.")
                 else:
-                    st.info("No headlines available.")
+                    st.info(f"No headlines currently available for {selected_stock}.")
             except Exception:
                 st.info("News feed currently offline.")
         else:

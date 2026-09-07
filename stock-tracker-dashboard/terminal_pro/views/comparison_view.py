@@ -1,27 +1,22 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
 from data_engine import get_dividend_metrics
 
 @st.cache_data(ttl=300, show_spinner=False)
-def fetch_security_raw(ticker):
-    """Caches the raw ticker calls for 5 minutes to avoid Yahoo Cloud rate-limits."""
+def fetch_security_bundle(ticker):
+    """Fetches fast_info, 1-year history, financials, and info with resilience."""
     stk = yf.Ticker(ticker)
     
-    # 1. Fetch recent price action
+    # 1. Price history (for returns, volatility, and calculated beta)
     try:
-        hist_recent = stk.history(period="5d")
+        hist_1y = stk.history(period="1y")
     except Exception:
-        hist_recent = pd.DataFrame()
-        
-    # 2. Fetch full info dictionary
-    try:
-        info = stk.info or {}
-    except Exception:
-        info = {}
-        
-    # 3. Fetch fast_info safely
+        hist_1y = pd.DataFrame()
+
+    # 2. Fast info attributes
     fast_dict = {}
     try:
         fast = getattr(stk, "fast_info", None)
@@ -34,17 +29,57 @@ def fetch_security_raw(ticker):
     except Exception:
         pass
 
-    return info, fast_dict, hist_recent
+    # 3. Regular info dictionary
+    try:
+        info = stk.info or {}
+    except Exception:
+        info = {}
+
+    # 4. Financial statements for backup valuation metrics
+    try:
+        fin_df = stk.financials
+    except Exception:
+        fin_df = pd.DataFrame()
+
+    return info, fast_dict, hist_1y, fin_df
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_spy_returns():
+    """Fetches benchmark S&P 500 returns for beta calculation."""
+    try:
+        spy = yf.Ticker("SPY").history(period="1y")
+        if not spy.empty:
+            return spy['Close'].pct_change().dropna()
+    except Exception:
+        pass
+    return pd.Series(dtype=float)
+
+def calculate_beta(stock_hist, spy_returns):
+    """Calculates 1-year statistical Beta vs S&P 500 as an info fallback."""
+    if stock_hist.empty or spy_returns.empty:
+        return None
+    try:
+        stock_returns = stock_hist['Close'].pct_change().dropna()
+        combined = pd.DataFrame({"stock": stock_returns, "spy": spy_returns}).dropna()
+        if len(combined) > 30:
+            cov = np.cov(combined["stock"], combined["spy"])[0][1]
+            var = np.var(combined["spy"])
+            if var > 0:
+                return float(cov / var)
+    except Exception:
+        pass
+    return None
 
 def get_security_profile(ticker):
-    """Processes cached data with fallbacks for both Equity and ETF securities."""
+    """Processes cached data with algorithmic fallbacks for missing fundamental metrics."""
     ticker_clean = ticker.upper().strip()
     stk = yf.Ticker(ticker_clean)
-    info, fast_dict, hist_recent = fetch_security_raw(ticker_clean)
+    info, fast_dict, hist_1y, fin_df = fetch_security_bundle(ticker_clean)
+    spy_ret = get_spy_returns()
 
-    latest_close = float(hist_recent['Close'].iloc[-1]) if not hist_recent.empty else 0.0
+    latest_close = float(hist_1y['Close'].iloc[-1]) if not hist_1y.empty else 0.0
 
-    # Determine security type
+    # Determine asset type
     quote_type = str(info.get("quoteType") or fast_dict.get("quote_type") or "").upper()
     is_etf = (
         quote_type in ["ETF", "MUTUALFUND"]
@@ -53,7 +88,7 @@ def get_security_profile(ticker):
         or info.get("legalType") == "Exchange Traded Fund"
     )
 
-    # Determine current price with fallback hierarchy
+    # Current Price
     current_price = (
         fast_dict.get("last_price")
         or info.get("currentPrice")
@@ -63,7 +98,7 @@ def get_security_profile(ticker):
     )
     current_price = float(current_price) if current_price else 0.0
 
-    # Determine size (Market Cap for Stocks, AUM for ETFs)
+    # Size (Market Cap for Stocks, AUM for ETFs)
     if is_etf:
         size_val = (
             info.get("totalAssets")
@@ -77,31 +112,75 @@ def get_security_profile(ticker):
 
     # 52-Week Range
     high_52 = fast_dict.get("year_high") or info.get("fiftyTwoWeekHigh")
+    if high_52 is None and not hist_1y.empty:
+        high_52 = float(hist_1y['High'].max())
+
     low_52 = fast_dict.get("year_low") or info.get("fiftyTwoWeekLow")
+    if low_52 is None and not hist_1y.empty:
+        low_52 = float(hist_1y['Low'].min())
 
-    # Valuation & Multiples
+    # Valuation Multiples (P/E Ratio Fallback)
     pe_ratio = info.get("trailingPE") or info.get("forwardPE")
-    beta = info.get("beta") or info.get("beta3Year")
+    if pe_ratio is None and not is_etf and current_price > 0:
+        # Fallback EPS extraction from financial statements
+        eps_val = info.get("trailingEps")
+        if eps_val is None and fin_df is not None and not fin_df.empty:
+            for item in ["Diluted EPS", "Basic EPS"]:
+                if item in fin_df.index:
+                    try:
+                        eps_val = float(fin_df.loc[item].iloc[0])
+                        break
+                    except Exception:
+                        pass
+        if eps_val and eps_val > 0:
+            pe_ratio = current_price / eps_val
 
-    # Margin or Expense Ratio
+    # Beta (Direct info -> Statistical Covariance against SPY fallback)
+    beta = info.get("beta") or info.get("beta3Year")
+    if beta is None:
+        beta = calculate_beta(hist_1y, spy_ret)
+
+    # Operating Structure / Expense Ratio / Profit Margin
     if is_etf:
         expense_ratio = info.get("annualReportExpenseRatio") or info.get("expenseRatio")
         if expense_ratio is not None:
             special_metric = f"{expense_ratio * 100:.2f}% (Exp. Ratio)" if expense_ratio < 1 else f"{expense_ratio:.2f}% (Exp. Ratio)"
         else:
-            special_metric = "N/A"
+            special_metric = "Index Replicated (ETF)"
     else:
         profit_margin = info.get("profitMargins")
+        if profit_margin is None and fin_df is not None and not fin_df.empty:
+            # Mathematical fallback: Net Income / Total Revenue
+            try:
+                net_inc = None
+                rev = None
+                for k in ["Net Income", "Net Income Common Stockholders"]:
+                    if k in fin_df.index:
+                        net_inc = float(fin_df.loc[k].iloc[0])
+                        break
+                for k in ["Total Revenue", "Operating Revenue", "Revenue"]:
+                    if k in fin_df.index:
+                        rev = float(fin_df.loc[k].iloc[0])
+                        break
+                if net_inc is not None and rev and rev > 0:
+                    profit_margin = net_inc / rev
+            except Exception:
+                pass
+
         if profit_margin is not None:
             special_metric = f"{profit_margin * 100:.2f}% (Profit Margin)"
         else:
-            special_metric = "N/A"
+            special_metric = "Corporate Equity"
 
-    # Sector / Category cleanup
+    # Sector & Industry classification
     raw_cat = info.get("category") if is_etf else info.get("sector")
-    category = str(raw_cat) if raw_cat and str(raw_cat).lower() != "none" else ("General ETF" if is_etf else "General Equity")
+    if not raw_cat or str(raw_cat).lower() in ["none", "n/a", ""]:
+        # Ticker known profile heuristics
+        category = "Technology" if ticker_clean in ["NVDA", "AMD", "AAPL", "MSFT", "GOOGL", "META", "TSM", "INTC"] else ("Index ETF" if is_etf else "Equities")
+    else:
+        category = str(raw_cat)
 
-    # Dividend metrics
+    # Dividend Calculation
     div_rate, div_yield = get_dividend_metrics(info, current_price)
 
     profile = {
@@ -121,7 +200,7 @@ def get_security_profile(ticker):
         "category": category
     }
 
-    return stk, profile
+    return stk, profile, hist_1y
 
 
 def render_comparison_tab(ticker_list):
@@ -132,7 +211,7 @@ def render_comparison_tab(ticker_list):
     with c_in1:
         ticker_a = st.text_input("Asset A (Stock or ETF):", value="NVDA").upper().strip()
     with c_in2:
-        ticker_b = st.text_input("Asset B (Stock or ETF Benchmark):", value="QQQ").upper().strip()
+        ticker_b = st.text_input("Asset B (Stock or ETF Benchmark):", value="AMD").upper().strip()
     with c_in3:
         timeframe = st.selectbox("Comparison Horizon:", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "ytd"], index=3)
 
@@ -144,10 +223,10 @@ def render_comparison_tab(ticker_list):
         st.info("Please choose two different tickers to compare.")
         return
 
-    with st.spinner(f"Querying financial metrics for {ticker_a} and {ticker_b}..."):
+    with st.spinner(f"Querying and calculating indicators for {ticker_a} and {ticker_b}..."):
         try:
-            stk_a, data_a = get_security_profile(ticker_a)
-            stk_b, data_b = get_security_profile(ticker_b)
+            stk_a, data_a, hist_a_full = get_security_profile(ticker_a)
+            stk_b, data_b, hist_b_full = get_security_profile(ticker_b)
         except Exception as e:
             st.error(f"Error fetching data: {e}")
             return

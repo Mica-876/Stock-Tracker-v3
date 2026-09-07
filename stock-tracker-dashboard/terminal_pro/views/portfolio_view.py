@@ -15,6 +15,16 @@ try:
 except ImportError:
     from ..data_engine import get_dividend_metrics
 
+def load_stored_portfolio():
+    """Safely retrieves portfolio data from storage module."""
+    if hasattr(storage, "load_portfolio_data"):
+        return storage.load_portfolio_data()
+    elif hasattr(storage, "load_data"):
+        return storage.load_data()
+    elif hasattr(storage, "load_user_data"):
+        return storage.load_user_data()
+    return {"profiles": {"Default Portfolio": {"cash": 10000.0, "positions": {}}}}
+
 def persist_portfolio(portfolio_data):
     """Safely dispatches to whichever save function exists in storage.py."""
     if hasattr(storage, "save_portfolio_data"):
@@ -24,11 +34,22 @@ def persist_portfolio(portfolio_data):
     elif hasattr(storage, "save_user_data"):
         storage.save_user_data(portfolio_data)
 
-def render_portfolio_tab(portfolio_data, ticker_list):
+def render_portfolio_tab(portfolio_data=None, ticker_list=None):
     st.markdown("### 💼 Portfolio Management & Allocation")
     st.caption("Manage custom portfolios, track positions, monitor allocations, and maintain profiles.")
 
-    # Ensure profile structure exists
+    # 1. Fallback if app.py calls render_portfolio_tab() without arguments
+    if portfolio_data is None:
+        if "portfolio_data" in st.session_state:
+            portfolio_data = st.session_state["portfolio_data"]
+        else:
+            portfolio_data = load_stored_portfolio()
+            st.session_state["portfolio_data"] = portfolio_data
+
+    if ticker_list is None:
+        ticker_list = st.session_state.get("watchlist", ["NVDA", "AAPL", "MSFT", "GOOGL"])
+
+    # 2. Ensure profiles structure exists
     if "profiles" not in portfolio_data or not portfolio_data["profiles"]:
         portfolio_data["profiles"] = {
             "Default Portfolio": {

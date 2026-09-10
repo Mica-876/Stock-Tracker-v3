@@ -1,45 +1,70 @@
+"""
+storage.py - Persistent JSON Storage for Watchlist and Portfolio Profiles
+"""
+
 import json
 import os
-import datetime
-import streamlit as st
 
-DATA_FILE = "saved_platform_data.json"
+WATCHLIST_FILE = "watchlist.json"
+PORTFOLIO_FILE = "portfolio.json"
 
-def load_storage():
-    default_data = {
-        "watchlist": ["CMS", "DTE", "FE", "AEP", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL"],
-        "portfolios": {
-            "Default User": [
-                {"ticker": "NVDA", "shares": 10, "buy_price": 120.00},
-                {"ticker": "AAPL", "shares": 15, "buy_price": 175.50}
-            ]
+DEFAULT_WATCHLIST = [
+    "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA",
+    "CMS", "DTE", "FE", "AEP", "AMD"
+]
+
+DEFAULT_PORTFOLIO = {
+    "profiles": {
+        "Default Portfolio": {
+            "cash": 10000.0,
+            "positions": {}
         }
     }
-    if os.path.exists(DATA_FILE):
+}
+
+# --- WATCHLIST STORAGE ---
+def load_user_data():
+    """Loads the user's active stock watchlist."""
+    if os.path.exists(WATCHLIST_FILE):
         try:
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
+            with open(WATCHLIST_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list) and data:
+                    return data
         except Exception:
-            return default_data
-    return default_data
+            pass
+    return list(DEFAULT_WATCHLIST)
 
-def save_storage(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+def save_user_data(ticker_list):
+    """Saves the user's stock watchlist to disk."""
+    try:
+        with open(WATCHLIST_FILE, "w") as f:
+            json.dump(ticker_list, f, indent=4)
+    except Exception as e:
+        print(f"Error saving watchlist: {e}")
 
-def init_session_state():
-    platform_data = load_storage()
-    if "ticker_list" not in st.session_state:
-        st.session_state.ticker_list = platform_data.get("watchlist", [])
+# Aliases for backwards compatibility
+load_data = load_user_data
+save_data = save_user_data
 
-    if "portfolios" not in st.session_state:
-        st.session_state.portfolios = platform_data.get("portfolios", {})
 
-    if "last_updated" not in st.session_state:
-        st.session_state.last_updated = datetime.datetime.now().strftime("%H:%M:%S")
+# --- PORTFOLIO STORAGE ---
+def load_portfolio_data():
+    """Loads multi-profile portfolio holdings and cash balances."""
+    if os.path.exists(PORTFOLIO_FILE):
+        try:
+            with open(PORTFOLIO_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "profiles" in data:
+                    return data
+        except Exception:
+            pass
+    return json.loads(json.dumps(DEFAULT_PORTFOLIO))
 
-def sync_to_file():
-    save_storage({
-        "watchlist": st.session_state.ticker_list,
-        "portfolios": st.session_state.portfolios
-    })
+def save_portfolio_data(portfolio_dict):
+    """Saves multi-profile portfolio holdings and cash balances."""
+    try:
+        with open(PORTFOLIO_FILE, "w") as f:
+            json.dump(portfolio_dict, f, indent=4)
+    except Exception as e:
+        print(f"Error saving portfolio data: {e}")
